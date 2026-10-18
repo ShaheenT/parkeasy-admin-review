@@ -18,7 +18,7 @@ export function revenueSeries(bookings: Row[], range: Range, paidOut: number) {
   })
   bookings.filter((b) => b.status !== 'cancelled').forEach((b) => {
     const p = out.find((x) => x.key === new Date(String(b.date)).toDateString())
-    if (p) { p.revenue += Number(b.amount); p.commission += Number(b.amount) * COMMISSION; p.bookings += 1 }
+    if (p) { p.revenue += Number(b.amount); p.commission += b.commissionAmount == null ? (b.paymentStatus == null ? Number(b.amount) * COMMISSION : 0) : Number(b.commissionAmount); p.bookings += 1 }
   })
   if (out.length) out[out.length - 1].payouts = paidOut
   return out
