@@ -49,9 +49,12 @@ async function list(resource:string) {
   if(error) return json({error:"Booking query failed"},500);
   const ps=await profiles((data||[]).flatMap((x:any)=>[x.driver_id,x.host_id]));
   const ids=(data||[]).map((x:any)=>x.listing_id).filter(Boolean);
+  const bookingIds=(data||[]).map((x:any)=>x.id);
   const {data:listings}=await db.from("parking_listings").select("id,title,address").in("id",ids.length?ids:["00000000-0000-0000-0000-000000000000"]);
+  const {data:escrows}=await db.from("escrow_transactions").select("booking_id,commission_amount,host_amount,status").in("booking_id",bookingIds.length?bookingIds:["00000000-0000-0000-0000-000000000000"]);
   const ls=new Map((listings||[]).map((x:any)=>[x.id,x]));
-  return json((data||[]).map((x:any)=>{const l:any=ls.get(x.listing_id);const mins=Number(x.duration_minutes??((new Date(x.end_time).getTime()-new Date(x.start_time).getTime())/60000));return {id:x.id,ref:String(x.id).slice(0,8).toUpperCase(),driver:(ps.get(x.driver_id) as any)?.full_name||(ps.get(x.driver_id) as any)?.email||"—",bay:l?.title||l?.address||"—",hours:Math.round(mins/60*100)/100,amount:Number(x.total_amount||0),status:x.status,paymentStatus:x.payment_status,date:x.start_time||x.created_at,start:x.start_time,end:x.end_time};}));
+  const es=new Map((escrows||[]).map((x:any)=>[x.booking_id,x]));
+  return json((data||[]).map((x:any)=>{const l:any=ls.get(x.listing_id);const e:any=es.get(x.id);const mins=Number(x.duration_minutes??((new Date(x.end_time).getTime()-new Date(x.start_time).getTime())/60000));return {id:x.id,ref:String(x.id).slice(0,8).toUpperCase(),driver:(ps.get(x.driver_id) as any)?.full_name||(ps.get(x.driver_id) as any)?.email||"—",bay:l?.title||l?.address||"—",hours:Math.round(mins/60*100)/100,amount:Number(x.total_amount||0),commissionAmount:e?Number(e.commission_amount||0):null,hostAmount:e?Number(e.host_amount||0):null,escrowStatus:e?.status||null,status:x.status,paymentStatus:x.payment_status,date:x.start_time||x.created_at,start:x.start_time,end:x.end_time};}));
  }
  if(resource==="payments") {
   const {data,error}=await db.from("payment_events").select("*").order("created_at",{ascending:false}).limit(500);
@@ -62,7 +65,7 @@ async function list(resource:string) {
   const {data,error}=await db.from("host_payouts").select("*").order("created_at",{ascending:false}).limit(500);
   if(error) return json({error:"Payout query failed"},500);
   const ps=await profiles((data||[]).map((x:any)=>x.host_id));
-  return json((data||[]).map((x:any)=>({id:x.id,ref:x.reference||String(x.id).slice(0,8),host:(ps.get(x.host_id) as any)?.full_name||(ps.get(x.host_id) as any)?.email||"—",amount:Number(x.total_amount||0),status:x.status,date:x.payout_date||x.created_at,bookingCount:x.booking_count})));
+  return json((data||[]).map((x:any)=>({id:x.id,ref:x.reference||String(x.id).slice(0,8),host:(ps.get(x.host_id) as any)?.full_name||(ps.get(x.host_id) as any)?.email||"—",amount:Number(x.total_amount||0),status:["pending","queued","processing"].includes(String(x.status).toLowerCase())?"queued":x.status,date:x.payout_date||x.created_at,bookingCount:x.booking_count})));
  }
  if(resource==="devices") {
   const {data,error}=await db.from("device_registrations").select("*").order("last_seen_at",{ascending:false}).limit(500);
