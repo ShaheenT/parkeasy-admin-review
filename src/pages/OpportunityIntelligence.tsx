@@ -8,7 +8,7 @@ const TYPES: { value: OpportunityType; label: string; description: string }[] = 
 ]
 const STATUS = ['research', 'verified', 'contacted', 'active', 'closed'] as const
 const emptyForm = { opportunityType: 'event' as OpportunityType, title: '', location: '', startsAt: '', endsAt: '', status: 'research', sourceUrl: '', confidence: 'unverified', estimatedDemand: '', nearbySupply: '', notes: '' }
-const labelStatus = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, (s) => s.toUpperCase())
+const labelStatus = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (s: string) => s.toUpperCase())
 
 export default function OpportunityIntelligence() {
   const [items, setItems] = useState<Opportunity[]>([])
