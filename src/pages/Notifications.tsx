@@ -8,7 +8,7 @@ export default function Notifications() {
   const [msg, setMsg] = useState(''), [info, setInfo] = useState('')
   const send = async (e: FormEvent) => {
     e.preventDefault()
-    await api.announce(msg); setMsg(''); setInfo('Announcement sent.'); refresh()
+    setInfo(''); try { await api.announce(msg); setMsg(''); setInfo('Announcement sent.'); refresh() } catch (e) { setInfo((e as Error).message) }
   }
   return (
     <>
