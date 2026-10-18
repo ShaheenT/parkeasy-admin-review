@@ -29,6 +29,51 @@ async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const wait = <T,>(v: T) => new Promise<T>((r) => setTimeout(() => r(structuredClone(v)), 120))
 
+export type ScoutWorkflowStatus = 'identified' | 'researched' | 'host_contacted' | 'listing_onboarded'
+export type ScoutTarget = {
+  id: string
+  targetKey: string
+  latitude: number
+  longitude: number
+  bookingsCount: number
+  supplyCount: number
+  priorityScore: number
+  workflowStatus: ScoutWorkflowStatus
+  researchNotes: string
+  contactName: string
+  contactMethod: string
+  listingId: string
+  statusChangedAt: string
+  createdAt: string
+  updatedAt: string
+}
+export type ScoutTargetSnapshot = {
+  targetKey: string
+  latitude: number
+  longitude: number
+  bookingsCount: number
+  supplyCount: number
+  priorityScore: number
+}
+export type ScoutTargetUpdate = {
+  status?: ScoutWorkflowStatus
+  researchNotes?: string
+  contactName?: string
+  contactMethod?: string
+  listingId?: string | null
+}
+const scoutTargetFromDb = (row: Record<string, unknown>): ScoutTarget => ({
+  id: String(row.id), targetKey: String(row.target_key),
+  latitude: Number(row.latitude), longitude: Number(row.longitude),
+  bookingsCount: Number(row.bookings_count ?? 0), supplyCount: Number(row.supply_count ?? 0),
+  priorityScore: Number(row.priority_score ?? 0),
+  workflowStatus: String(row.workflow_status ?? 'identified') as ScoutWorkflowStatus,
+  researchNotes: String(row.research_notes ?? ''), contactName: String(row.contact_name ?? ''),
+  contactMethod: String(row.contact_method ?? ''), listingId: String(row.listing_id ?? ''),
+  statusChangedAt: String(row.status_changed_at ?? ''), createdAt: String(row.created_at ?? ''),
+  updatedAt: String(row.updated_at ?? ''),
+})
+
 export const api = {
   /** POST /auth/login -> { token, user } */
   async login(email: string, password: string): Promise<{ token: string; user: User }> {
@@ -76,5 +121,20 @@ export const api = {
       return wait(i)
     }
     return http(`/admin/integrations/${id}`, { method: 'PUT', body: JSON.stringify({ connected, config }) })
+  },
+  async scoutTargets(): Promise<ScoutTarget[]> {
+    if (MOCK) return wait([] as ScoutTarget[])
+    const rows = await http<Record<string, unknown>[]>('/admin/scout-targets')
+    return rows.map(scoutTargetFromDb)
+  },
+  async syncScoutTargets(targets: ScoutTargetSnapshot[]): Promise<ScoutTarget[]> {
+    if (MOCK) return wait([] as ScoutTarget[])
+    const rows = await http<Record<string, unknown>[]>('/admin/scout-targets/sync', { method: 'POST', body: JSON.stringify({ targets }) })
+    return rows.map(scoutTargetFromDb)
+  },
+  async updateScoutTarget(id: string, patch: ScoutTargetUpdate): Promise<ScoutTarget> {
+    if (MOCK) throw new Error('Scout workflow is available only with the connected test database.')
+    const row = await http<Record<string, unknown>>(`/admin/scout-targets/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+    return scoutTargetFromDb(row)
   },
 }
