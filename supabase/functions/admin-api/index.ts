@@ -114,6 +114,12 @@ Deno.serve(async (req:Request)=>{
    if(!admin||!["admin","support","super_admin"].includes(String(admin.role).toLowerCase())) return json({error:"This account is not authorised for the admin dashboard."},403);
    return json({token:data.session.access_token,user:{id:data.user.id,name:data.user.user_metadata?.full_name||data.user.email,email:data.user.email,role:roleForUi(admin.role)}});
   }
+  if(req.method==="GET"&&path==="/public/events") {
+   const now=new Date().toISOString();
+   const {data,error}=await db.from("marketplace_events").select("id,title,slug,category,description,venue_name,address,latitude,longitude,starts_at,ends_at,image_url,ticket_url,promoted").eq("status","approved").gt("ends_at",now).order("promoted",{ascending:false}).order("starts_at",{ascending:true}).limit(200);
+   if(error) return json({error:"Public events could not be loaded"},500);
+   return json(data||[]);
+  }
   const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if(!token) return json({error:"Sign in required"},401);
   const auth=await authorize(token); if(!auth) return json({error:"Invalid session or admin access denied"},401);
@@ -177,7 +183,7 @@ Deno.serve(async (req:Request)=>{
    if(auth.role!=="admin") return json({error:"Admin role required"},403);
    const b=await req.json(); const start=Date.parse(b?.startsAt), end=Date.parse(b?.endsAt);
    if(!String(b?.organizerId||"").trim()||!String(b?.title||"").trim()||!String(b?.venueName||"").trim()||!String(b?.address||"").trim()||!Number.isFinite(start)||!Number.isFinite(end)||end<=start) return json({error:"Organiser, title, venue, address and a valid end-after-start date range are required"},400);
-   const {data:org}=await db.from("event_organizers").select("id,status").eq("id",b.organizerId).maybeSingle();
+   const {data:org}=await db.from("event_organizers").select("id,status,organization_name").eq("id",b.organizerId).maybeSingle();
    if(!org) return json({error:"Select an existing organiser"},400);
    const base=String(b.title).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,80)||"event";
    const slug=base+"-"+crypto.randomUUID().slice(0,8);
@@ -185,7 +191,7 @@ Deno.serve(async (req:Request)=>{
    if((lat!==null&&(!Number.isFinite(lat)||lat < -90||lat > 90))||(lng!==null&&(!Number.isFinite(lng)||lng < -180||lng > 180))) return json({error:"Latitude or longitude is invalid"},400);
    const {data,error}=await db.from("marketplace_events").insert({organizer_id:b.organizerId,title:String(b.title).trim().slice(0,200),slug,category:String(b.category||"other").slice(0,60),description:String(b.description||"").slice(0,10000),venue_name:String(b.venueName).trim().slice(0,250),address:String(b.address).trim().slice(0,500),latitude:lat,longitude:lng,starts_at:new Date(start).toISOString(),ends_at:new Date(end).toISOString(),image_url:String(b.imageUrl||"").trim()||null,ticket_url:String(b.ticketUrl||"").trim()||null,status:"pending_review",promoted:false}).select("*").single();
    if(error) return json({error:"Event could not be saved"},500);
-   return json({...data,organizer_name:org.status==="approved"?"Organiser pending name":"Organiser review required"},201);
+   return json({...data,organizer_name:org.organization_name},201);
   }
   const eventMatch=path.match(/^\\/admin\\/events\\/([^/]+)$/);
   if(eventMatch&&req.method==="PATCH") {
