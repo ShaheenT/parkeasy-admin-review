@@ -116,7 +116,7 @@ Deno.serve(async (req:Request)=>{
   }
   if(req.method==="GET"&&path==="/public/events") {
    const now=new Date().toISOString();
-   const {data,error}=await db.from("marketplace_events").select("id,title,slug,category,description,venue_name,address,latitude,longitude,starts_at,ends_at,image_url,ticket_url,promoted").eq("status","approved").gt("ends_at",now).order("promoted",{ascending:false}).order("starts_at",{ascending:true}).limit(200);
+   const {data,error}=await db.from("marketplace_events").select("id,title,slug,category,description,venue_name,address,latitude,longitude,starts_at,ends_at,image_url,ticket_url,promoted,event_organizers!inner(status)").eq("status","approved").eq("event_organizers.status","approved").gt("ends_at",now).order("promoted",{ascending:false}).order("starts_at",{ascending:true}).limit(200);
    if(error) return json({error:"Public events could not be loaded"},500);
    return json(data||[]);
   }
