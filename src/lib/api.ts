@@ -5,6 +5,7 @@ import { db, integrationsDb } from './mock'
 const BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
 export const MOCK = import.meta.env.VITE_USE_MOCK === 'true' || !BASE
 const TOKEN_KEY = 'parkeasy.token'
+const PUBLIC_API_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ''
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY),
@@ -19,7 +20,7 @@ async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
   const target = `${BASE}?path=${encodeURIComponent(path)}`
   const res = await fetch(target, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {}), ...init.headers },
+    headers: { 'Content-Type': 'application/json', ...(PUBLIC_API_KEY ? { apikey: PUBLIC_API_KEY } : {}), ...(tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {}), ...init.headers },
   })
   if (res.status === 401) { window.dispatchEvent(new Event(UNAUTHORIZED_EVENT)); throw new Error('Session expired. Sign in again.') }
   if (!res.ok) throw new Error((await res.text()) || `Request failed (${res.status})`)
