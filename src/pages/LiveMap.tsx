@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useResource } from '../components/useResource'
+import { api, type ScoutTarget, type ScoutWorkflowStatus } from '../lib/api'
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
 const COLORS: Record<string, string> = {
@@ -16,6 +17,14 @@ const COLORS: Record<string, string> = {
 }
 
 type DemandCell = { key: string; lat: number; lng: number; supply: number; bookings: number; gap: boolean; names: string[]; targetScore: number }
+
+const SCOUT_STAGES: { value: ScoutWorkflowStatus; label: string }[] = [
+  { value: 'identified', label: 'Identified' },
+  { value: 'researched', label: 'Researched' },
+  { value: 'host_contacted', label: 'Host contacted' },
+  { value: 'listing_onboarded', label: 'Listing onboarded' },
+]
+const SCOUT_STAGE_RANK: Record<ScoutWorkflowStatus, number> = { identified: 0, researched: 1, host_contacted: 2, listing_onboarded: 3 }
 
 const valueOf = (row: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) { const value = row[key]; if (value != null && String(value).trim()) return String(value).trim() }
@@ -35,6 +44,11 @@ export default function LiveMap() {
   const [mapReady, setMapReady] = useState(false)
   const [showDemand, setShowDemand] = useState(true)
   const [copiedTarget, setCopiedTarget] = useState('')
+  const [scoutWorkflow, setScoutWorkflow] = useState<ScoutTarget[]>([])
+  const [scoutWorkflowError, setScoutWorkflowError] = useState('')
+  const [scoutSaving, setScoutSaving] = useState('')
+  const [scoutDrafts, setScoutDrafts] = useState<Record<string, { researchNotes: string; contactName: string; contactMethod: string; listingId: string }>>({})
+  const syncedScoutSnapshot = useRef('')
 
   const locatedRows = rows.filter((bay) =>
     bay.lat != null && bay.lng != null &&
@@ -97,13 +111,76 @@ export default function LiveMap() {
     return { cells: Array.from(cells.values()).filter((cell) => cell.bookings > 0).sort((a, b) => Number(b.gap) - Number(a.gap) || b.targetScore - a.targetScore || b.bookings - a.bookings), linkedBookings }
   }, [rows, bookings, locatedRows])
   const supplyGapCount = demandCells.cells.filter((cell) => cell.gap).length
-  const scoutTargets = demandCells.cells.filter((cell) => cell.gap).slice(0, 5)
+  const scoutTargets = useMemo(() => demandCells.cells.filter((cell) => cell.gap).slice(0, 5), [demandCells.cells])
   const formatTargetLocation = (cell: DemandCell) => `${cell.lat.toFixed(2)}, ${cell.lng.toFixed(2)}`
-  const scoutBrief = (cell: DemandCell) => `PARKEASY SCOUT — HOST ACQUISITION TARGET\nMap zone: ${formatTargetLocation(cell)} (approx. 1 km planning cell)\nPriority score: ${cell.targetScore}/100 (rule-based)\nLinked booking records: ${cell.bookings}\nActive/available listings in zone: ${cell.supply}\nOpportunity: recruit additional private/residential parking hosts in and around this zone.\nValidation: confirm local demand, access, safety, pricing and host availability before onboarding.\nNote: booking activity is a proxy; it does not prove unmet demand.`
-  const copyScoutBrief = async (cell: DemandCell) => {
-    try { await navigator.clipboard.writeText(scoutBrief(cell)); setCopiedTarget(cell.key) }
+  const scoutBrief = (target: ScoutTarget) => `PARKEASY SCOUT — HOST ACQUISITION TARGET\nMap zone: ${target.latitude.toFixed(2)}, ${target.longitude.toFixed(2)} (approx. 1 km planning cell)\nPriority score: ${target.priorityScore}/100 (rule-based)\nLinked booking records: ${target.bookingsCount}\nActive/available listings in zone: ${target.supplyCount}\nWorkflow: ${SCOUT_STAGES.find((stage) => stage.value === target.workflowStatus)?.label ?? target.workflowStatus}\nResearch notes: ${target.researchNotes || 'Not recorded'}\nContact: ${target.contactName || 'Not recorded'} · ${target.contactMethod || 'Not recorded'}\nOpportunity: investigate additional private/residential parking hosts in and around this zone.\nValidation: confirm local demand, access, safety, pricing, permissions and host availability before onboarding.\nNote: booking activity is a proxy; it does not prove unmet demand.`
+  const copyScoutBrief = async (target: ScoutTarget) => {
+    try { await navigator.clipboard.writeText(scoutBrief(target)); setCopiedTarget(target.targetKey) }
     catch { setCopiedTarget('') }
   }
+  const replaceScoutTarget = (updated: ScoutTarget) => {
+    setScoutWorkflow((current) => current.map((target) => target.id === updated.id ? updated : target).sort((a, b) => b.priorityScore - a.priorityScore))
+    setScoutDrafts((current) => ({ ...current, [updated.id]: { researchNotes: updated.researchNotes, contactName: updated.contactName, contactMethod: updated.contactMethod, listingId: updated.listingId } }))
+  }
+  const updateScoutStage = async (target: ScoutTarget, status: ScoutWorkflowStatus) => {
+    if (status === target.workflowStatus) return
+    setScoutSaving(target.id); setScoutWorkflowError('')
+    try { replaceScoutTarget(await api.updateScoutTarget(target.id, { status })) }
+    catch (e) { setScoutWorkflowError((e as Error).message) }
+    finally { setScoutSaving('') }
+  }
+  const saveScoutDetails = async (target: ScoutTarget) => {
+    const draft = scoutDrafts[target.id] ?? { researchNotes: target.researchNotes, contactName: target.contactName, contactMethod: target.contactMethod, listingId: target.listingId }
+    setScoutSaving(target.id); setScoutWorkflowError('')
+    try { replaceScoutTarget(await api.updateScoutTarget(target.id, { researchNotes: draft.researchNotes, contactName: draft.contactName, contactMethod: draft.contactMethod, listingId: draft.listingId || null })) }
+    catch (e) { setScoutWorkflowError((e as Error).message) }
+    finally { setScoutSaving('') }
+  }
+  const editScoutDraft = (target: ScoutTarget, field: 'researchNotes' | 'contactName' | 'contactMethod' | 'listingId', value: string) => {
+    setScoutDrafts((current) => ({
+      ...current,
+      [target.id]: {
+        researchNotes: current[target.id]?.researchNotes ?? target.researchNotes,
+        contactName: current[target.id]?.contactName ?? target.contactName,
+        contactMethod: current[target.id]?.contactMethod ?? target.contactMethod,
+        listingId: current[target.id]?.listingId ?? target.listingId,
+        [field]: value,
+      },
+    }))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    api.scoutTargets().then((targets) => {
+      if (cancelled) return
+      setScoutWorkflow(targets)
+      setScoutDrafts(Object.fromEntries(targets.map((target) => [target.id, { researchNotes: target.researchNotes, contactName: target.contactName, contactMethod: target.contactMethod, listingId: target.listingId }])))
+    }).catch((e) => { if (!cancelled) setScoutWorkflowError((e as Error).message) })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (demandCells.linkedBookings === 0 || scoutTargets.length === 0) return
+    const snapshots = scoutTargets.map((cell) => ({
+      targetKey: cell.key, latitude: cell.lat, longitude: cell.lng,
+      bookingsCount: cell.bookings, supplyCount: cell.supply, priorityScore: cell.targetScore,
+    }))
+    const fingerprint = JSON.stringify(snapshots)
+    if (syncedScoutSnapshot.current === fingerprint) return
+    syncedScoutSnapshot.current = fingerprint
+    let cancelled = false
+    api.syncScoutTargets(snapshots).then(() => api.scoutTargets()).then((targets) => {
+      if (cancelled) return
+      setScoutWorkflow(targets)
+      setScoutDrafts((current) => {
+        const next = { ...current }
+        targets.forEach((target) => { if (!next[target.id]) next[target.id] = { researchNotes: target.researchNotes, contactName: target.contactName, contactMethod: target.contactMethod, listingId: target.listingId } })
+        return next
+      })
+      setScoutWorkflowError('')
+    }).catch((e) => { if (!cancelled) { syncedScoutSnapshot.current = ''; setScoutWorkflowError((e as Error).message) } })
+    return () => { cancelled = true }
+  }, [demandCells.linkedBookings, scoutTargets])
 
   const intelligenceItems = [
     ...(offlineDevices.length ? [{ level: 'critical', title: offlineDevices.length + ' device(s) offline', detail: 'Review device connectivity before relying on live device status.' }] : []),
@@ -258,17 +335,33 @@ export default function LiveMap() {
         <div><strong>Demand intelligence</strong><span>{demandCells.linkedBookings} booking record(s) linked to mapped listings · {supplyGapCount} potential supply-gap area(s)</span></div>
         <button type="button" className={showDemand ? 'pri' : 'ghost'} aria-pressed={showDemand} onClick={() => setShowDemand((value) => !value)}>{showDemand ? 'Hide demand layer' : 'Show demand layer'}</button>
       </div>
-      {demandCells.linkedBookings > 0 && <section className="scout-opportunities" aria-label="ParkEasy Scout host acquisition targets">
+      {(demandCells.linkedBookings > 0 || scoutWorkflow.length > 0) && <section className="scout-opportunities" aria-label="ParkEasy Scout host acquisition workflow">
         <div className="scout-opportunities-head">
-          <div><span className="intelligence-eyebrow">PARKEASY SCOUT</span><h3>Host acquisition opportunities</h3><p>Ranked from linked booking activity and active listing supply. Target zones are approximate map cells, not official neighbourhood boundaries.</p></div>
-          <span className="scout-count">{scoutTargets.length} priority target(s)</span>
+          <div><span className="intelligence-eyebrow">PARKEASY SCOUT</span><h3>Host acquisition pipeline</h3><p>Targets are synchronised from real test bookings and supply. Progress is saved in the test database, shared across authorised admin sessions, and retained when a zone temporarily falls below the priority rule.</p></div>
+          <span className="scout-count">{scoutWorkflow.length} tracked target(s)</span>
         </div>
-        {scoutTargets.length ? <div className="scout-target-list">{scoutTargets.map((cell, index) => <article className="scout-target" key={cell.key}>
-          <div className="scout-rank">{String(index + 1).padStart(2, '0')}</div>
-          <div className="scout-target-main"><div className="scout-target-title"><strong>Recruit hosts near {formatTargetLocation(cell)}</strong><span className="scout-priority">PRIORITY {cell.targetScore}</span></div><p>{cell.bookings} linked bookings · {cell.supply} active/available listing(s) · approx. 1 km zone</p><small>Suggested action: scout private driveways, residential parking and small off-street lots; verify availability and permissions before listing.</small></div>
-          <button type="button" className="ghost scout-copy" onClick={() => void copyScoutBrief(cell)}><span>{copiedTarget === cell.key ? 'Copied' : 'Copy Scout brief'}</span></button>
-        </article>)}</div> : <div className="scout-no-targets">No zones currently meet the priority rule (at least 3 linked bookings and no more than 2 active/available listings). Booking-active zones remain visible on the map for monitoring.</div>}
-        <p className="scout-footnote">Priority score is a transparent heuristic, not a forecast. Validate on-the-ground demand before investing time in recruitment.</p>
+        <div className="scout-stage-strip">{SCOUT_STAGES.map((stage) => <div key={stage.value}><strong>{scoutWorkflow.filter((target) => target.workflowStatus === stage.value).length}</strong><span>{stage.label}</span></div>)}</div>
+        {scoutWorkflowError && <div className="err" role="alert">{scoutWorkflowError}</div>}
+        {scoutWorkflow.length ? <div className="scout-target-list">{scoutWorkflow.map((target, index) => {
+          const draft = scoutDrafts[target.id] ?? { researchNotes: target.researchNotes, contactName: target.contactName, contactMethod: target.contactMethod, listingId: target.listingId }
+          const stageRank = SCOUT_STAGE_RANK[target.workflowStatus]
+          return <article className="scout-target scout-workflow-target" key={target.id}>
+            <div className="scout-rank">{String(index + 1).padStart(2, '0')}</div>
+            <div className="scout-target-main">
+              <div className="scout-target-title"><strong>Recruit hosts near {target.latitude.toFixed(2)}, {target.longitude.toFixed(2)}</strong><span className="scout-priority">PRIORITY {target.priorityScore}</span></div>
+              <p>{target.bookingsCount} linked bookings · {target.supplyCount} active/available listing(s) · approx. 1 km zone</p>
+              <label className="scout-field"><span>Workflow stage</span><select aria-label="Scout workflow stage" value={target.workflowStatus} disabled={scoutSaving === target.id} onChange={(event) => void updateScoutStage(target, event.target.value as ScoutWorkflowStatus)}>{SCOUT_STAGES.map((stage) => <option key={stage.value} value={stage.value} disabled={SCOUT_STAGE_RANK[stage.value] < stageRank || SCOUT_STAGE_RANK[stage.value] > stageRank + 1}>{stage.label}</option>)}</select></label>
+              <div className="scout-detail-grid">
+                <label className="scout-field"><span>Host / contact name</span><input value={draft.contactName} onChange={(event) => editScoutDraft(target, 'contactName', event.target.value)} placeholder="Name, if known" /></label>
+                <label className="scout-field"><span>Contact method / outcome</span><input value={draft.contactMethod} onChange={(event) => editScoutDraft(target, 'contactMethod', event.target.value)} placeholder="Email, call, visit…" /></label>
+                <label className="scout-field scout-notes-field"><span>Research / follow-up notes</span><input value={draft.researchNotes} onChange={(event) => editScoutDraft(target, 'researchNotes', event.target.value)} placeholder="Access, permissions, price, next action…" /></label>
+                <label className="scout-field"><span>Linked listing (optional)</span><select value={draft.listingId} onChange={(event) => editScoutDraft(target, 'listingId', event.target.value)}><option value="">Not linked</option>{rows.map((bay) => <option key={String(bay.id)} value={String(bay.id)}>{String(bay.name ?? 'Parking listing')}</option>)}</select></label>
+              </div>
+              <div className="scout-target-actions"><small>Stage last changed: {target.statusChangedAt ? new Date(target.statusChangedAt).toLocaleDateString('en-ZA') : '—'}</small><button type="button" className="ghost" disabled={scoutSaving === target.id} onClick={() => void saveScoutDetails(target)}>{scoutSaving === target.id ? 'Saving…' : 'Save details'}</button><button type="button" className="ghost scout-copy" onClick={() => void copyScoutBrief(target)}><span>{copiedTarget === target.targetKey ? 'Copied' : 'Copy Scout brief'}</span></button></div>
+            </div>
+          </article>
+        })}</div> : <div className="scout-no-targets">No priority zones have been saved yet. The workflow starts when linked booking activity identifies a qualifying zone.</div>}
+        <p className="scout-footnote">Priority score is a transparent heuristic, not a forecast. Workflow stages advance one step at a time. Verify local demand, property permission, safety and availability before onboarding a host.</p>
       </section>}
       {demandCells.linkedBookings === 0 && <p className="lab demand-note">No booking records could be reliably linked to mapped listings. The demand layer will only display evidence-backed areas once booking rows contain a matching listing ID or name. It does not infer demand from map proximity alone.</p>}
       <div className="card live-map-card">
