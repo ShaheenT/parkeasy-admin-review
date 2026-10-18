@@ -141,7 +141,7 @@ Deno.serve(async (req:Request)=>{
    if(error) return json({error:"Opportunity could not be saved"},500);
    return json({id:data.id,opportunityType:data.opportunity_type,title:data.title,location:data.location,latitude:data.latitude,longitude:data.longitude,startsAt:data.starts_at,endsAt:data.ends_at,status:data.status,sourceUrl:data.source_url||"",confidence:data.confidence,estimatedDemand:data.estimated_demand,nearbySupply:data.nearby_supply,notes:data.notes||"",createdAt:data.created_at,updatedAt:data.updated_at},201);
   }
-  const opp=path.match(/^\\/admin\\/opportunities\\/([^/]+)$/);
+  const opp=path.match(new RegExp("^/admin/opportunities/([^/]+)$"));
   if(opp&&req.method==="PATCH") {
    if(!["admin","super_admin"].includes(String(auth.role).toLowerCase())) return json({error:"Admin role required"},403);
    const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
