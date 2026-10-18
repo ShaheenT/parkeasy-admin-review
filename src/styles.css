@@ -109,3 +109,21 @@ th,td{padding:10px 8px;border-bottom:1px solid var(--line);white-space:nowrap}.t
 .intelligence-clear{display:flex;align-items:flex-start;gap:10px;padding:14px}
 .intelligence-clear>span{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgba(0,229,168,.12);color:var(--p1);font-size:12px;flex:none}
 @media(max-width:700px){.intelligence-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.intelligence-heading{align-items:flex-start;flex-direction:column}.intelligence-item{grid-template-columns:8px minmax(0,1fr)}.intelligence-level{grid-column:2}.intelligence-mode{align-self:flex-start}}
+
+
+/* Booking-based demand intelligence overlay */
+.demand-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 15px;border:1px solid rgba(0,229,168,.2);border-radius:12px;background:rgba(0,229,168,.035)}
+.demand-toolbar>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.demand-toolbar strong{font-size:12px}
+.demand-toolbar span,.demand-note,.demand-disclaimer{font-size:11px;color:var(--mut);line-height:1.55}
+.demand-toolbar button{flex:none;font-size:11px}
+.demand-note{margin:-5px 0 0;padding:10px 12px;border-left:2px solid var(--warn);background:rgba(251,191,36,.05)}
+.demand-disclaimer{margin:0}
+.demand-map-marker{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:84px;padding:7px 9px;border-radius:10px;border:1px solid rgba(0,229,168,.7);background:rgba(0,229,168,.16);color:#fff;box-shadow:0 0 0 5px rgba(0,229,168,.08),0 5px 20px rgba(0,0,0,.35);backdrop-filter:blur(8px);cursor:pointer;white-space:nowrap}
+.demand-map-marker span{font-family:var(--display);font-size:23px;line-height:1;color:#00E5A8}
+.demand-map-marker small{font-size:7px;letter-spacing:.07em;font-weight:800}
+.demand-map-marker.gap{border-color:#fb7185;background:rgba(251,113,133,.2);box-shadow:0 0 0 7px rgba(251,113,133,.12),0 5px 20px rgba(0,0,0,.4)}
+.demand-map-marker.gap span{color:#fb7185}
+.map-legend i.demand-legend-dot,.demand-legend-dot{background:#00E5A8;box-shadow:0 0 8px rgba(0,229,168,.6)}
+.map-legend i.demand-gap-legend-dot,.demand-gap-legend-dot{background:#fb7185;box-shadow:0 0 8px rgba(251,113,133,.6)}
+@media(max-width:600px){.demand-toolbar{align-items:flex-start;flex-direction:column}.demand-toolbar button{width:100%;justify-content:center}.demand-map-marker{min-width:72px;padding:6px 7px}.demand-map-marker small{font-size:6px}}
