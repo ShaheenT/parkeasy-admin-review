@@ -15,13 +15,12 @@ const COLORS: Record<string, string> = {
   inactive: '#fb7185',
 }
 
-const escapeHtml = (value: unknown) => String(value ?? '—').replace(/[&<>"']/g, (char) => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-}[char] ?? char))
-
 /** Test-environment live bay map. Refreshes listings every 15 seconds. */
 export default function LiveMap() {
   const { rows, error, loading } = useResource('bays', 15000)
+  const { rows: bookings } = useResource('bookings', 15000)
+  const { rows: payments } = useResource('payments', 15000)
+  const { rows: devices } = useResource('devices', 15000)
   const el = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const markers = useRef<mapboxgl.Marker[]>([])
@@ -35,6 +34,23 @@ export default function LiveMap() {
   const activeCount = locatedRows.filter((bay) => ['active', 'available'].includes(String(bay.status).toLowerCase())).length
   const pausedCount = locatedRows.filter((bay) => ['paused', 'pending'].includes(String(bay.status).toLowerCase())).length
   const unavailableCount = locatedRows.length - activeCount - pausedCount
+  const missingCoordinates = rows.filter((bay) =>
+    bay.lat == null || bay.lng == null ||
+    !Number.isFinite(Number(bay.lat)) || !Number.isFinite(Number(bay.lng)) ||
+    Number(bay.lat) < -90 || Number(bay.lat) > 90 ||
+    Number(bay.lng) < -180 || Number(bay.lng) > 180
+  )
+  const offlineDevices = devices.filter((device) => ['offline', 'disconnected', 'error'].includes(String(device.status ?? '').toLowerCase()))
+  const lowBatteryDevices = devices.filter((device) => device.battery != null && Number.isFinite(Number(device.battery)) && Number(device.battery) <= 20)
+  const pendingBookings = bookings.filter((booking) => ['pending', 'awaiting_payment', 'payment_pending'].includes(String(booking.status ?? '').toLowerCase()))
+  const failedPayments = payments.filter((payment) => ['failed', 'declined', 'error'].includes(String(payment.status ?? '').toLowerCase()))
+  const intelligenceItems = [
+    ...(offlineDevices.length ? [{ level: 'critical', title: offlineDevices.length + ' device(s) offline', detail: 'Review device connectivity before relying on live device status.' }] : []),
+    ...(failedPayments.length ? [{ level: 'critical', title: failedPayments.length + ' failed payment(s)', detail: 'Review payment records and booking outcomes before taking action.' }] : []),
+    ...(lowBatteryDevices.length ? [{ level: 'warning', title: lowBatteryDevices.length + ' device(s) at 20% battery or less', detail: 'Prioritise these devices for charging or maintenance.' }] : []),
+    ...(pendingBookings.length ? [{ level: 'warning', title: pendingBookings.length + ' booking(s) awaiting completion', detail: 'Review the booking and payment status together.' }] : []),
+    ...(missingCoordinates.length ? [{ level: 'warning', title: missingCoordinates.length + ' listing(s) missing valid coordinates', detail: 'These listings cannot be plotted accurately until latitude and longitude are corrected.' }] : []),
+  ]
 
   useEffect(() => {
     if (!TOKEN || !el.current) return
@@ -121,6 +137,28 @@ export default function LiveMap() {
         <span className="map-live-status"><i /> LIVE</span>
       </div>
       {error && <div className="err" role="alert">{error}</div>}
+      <section className="map-intelligence" aria-label="ParkEasy intelligence">
+        <div className="intelligence-heading">
+          <div><span className="intelligence-eyebrow">PARKEASY INTELLIGENCE</span><h3>Operations signals</h3></div>
+          <span className="intelligence-mode">RULE-BASED · LIVE DATA</span>
+        </div>
+        <div className="intelligence-stats">
+          <div><span>Listings</span><strong>{rows.length}</strong><small>{locatedRows.length} mapped</small></div>
+          <div><span>Bookings</span><strong>{bookings.length}</strong><small>{pendingBookings.length} pending</small></div>
+          <div><span>Payments</span><strong>{payments.length}</strong><small>{failedPayments.length} failed</small></div>
+          <div><span>Devices</span><strong>{devices.length}</strong><small>{offlineDevices.length} offline</small></div>
+        </div>
+        <div className="intelligence-feed">
+          <div className="intelligence-feed-title"><strong>Attention queue</strong><span>{intelligenceItems.length ? intelligenceItems.length + ' signal(s)' : 'No rule-based alerts'}</span></div>
+          {intelligenceItems.length ? intelligenceItems.map((item) => (
+            <div className={'intelligence-item ' + item.level} key={item.title}>
+              <span className="intelligence-indicator" />
+              <div><strong>{item.title}</strong><p>{item.detail}</p></div>
+              <span className="intelligence-level">{item.level === 'critical' ? 'URGENT' : 'REVIEW'}</span>
+            </div>
+          )) : <div className="intelligence-clear"><span>✓</span><div><strong>No current rule-based alerts</strong><p>Signals will appear when the connected test data meets an alert rule. This is not a guarantee that every operational issue is absent.</p></div></div>}
+        </div>
+      </section>
       <div className="map-summary">
         <div><span className="map-summary-dot available" /><strong>{activeCount}</strong><span>Available / active</span></div>
         <div><span className="map-summary-dot paused" /><strong>{pausedCount}</strong><span>Paused / pending</span></div>
