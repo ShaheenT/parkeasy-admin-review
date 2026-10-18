@@ -117,6 +117,14 @@ Deno.serve(async (req:Request)=>{
   if(!token) return json({error:"Sign in required"},401);
   const auth=await authorize(token); if(!auth) return json({error:"Invalid session or admin access denied"},401);
   if(req.method==="GET"&&path==="/auth/me") return json({id:auth.user.id,name:auth.user.user_metadata?.full_name||auth.user.email,email:auth.user.email,role:auth.role});
+  if(req.method==="GET"&&path==="/admin/integrations") return json([
+   {id:"slack",name:"Slack",description:"Booking, payout and device alerts; server-side webhook setup required.",connected:false,config:""},
+   {id:"zoom",name:"Zoom",description:"Host onboarding calls; OAuth setup required.",connected:false},
+   {id:"hubspot",name:"HubSpot",description:"CRM sync; server-side OAuth setup required.",connected:false},
+   {id:"salesforce",name:"Salesforce",description:"CRM sync; server-side OAuth setup required.",connected:false}
+  ]);
+  if(req.method==="PUT"&&path.startsWith("/admin/integrations/")) return json({error:"Integration credentials are not stored until a secure server-side OAuth/webhook flow is configured."},409);
+  if(req.method==="POST"&&path==="/admin/announcements") return json({error:"Push announcements are not enabled yet; no message was sent."},409);
   const m=path.match(/^\/admin\/([a-z-]+)(?:\/([^/]+))?$/);
   if(req.method==="GET"&&m&&!m[2]) return await list(m[1]);
   if(req.method==="PATCH"&&m?.[2]) {
