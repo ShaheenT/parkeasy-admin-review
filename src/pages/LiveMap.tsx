@@ -152,7 +152,7 @@ export default function LiveMap() {
   useEffect(() => {
     let cancelled = false
     api.scoutTargets().then((targets) => {
-      if (cancelled) return
+      if (cancelled || syncedScoutSnapshot.current) return
       setScoutWorkflow(targets)
       setScoutDrafts(Object.fromEntries(targets.map((target) => [target.id, { researchNotes: target.researchNotes, contactName: target.contactName, contactMethod: target.contactMethod, listingId: target.listingId }])))
     }).catch((e) => { if (!cancelled) setScoutWorkflowError((e as Error).message) })
