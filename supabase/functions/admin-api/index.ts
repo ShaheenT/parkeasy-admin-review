@@ -126,6 +126,33 @@ Deno.serve(async (req:Request)=>{
   ]);
   if(req.method==="PUT"&&path.startsWith("/admin/integrations/")) return json({error:"Integration credentials are not stored until a secure server-side OAuth/webhook flow is configured."},409);
   if(req.method==="POST"&&path==="/admin/announcements") return json({error:"Push announcements are not enabled yet; no message was sent."},409);
+  if(path==="/admin/opportunities"&&req.method==="GET") {
+   const {data,error}=await db.from("admin_opportunities").select("*").order("starts_at",{ascending:true,nullsFirst:false}).order("created_at",{ascending:false});
+   if(error) return json({error:"Opportunity records could not be loaded"},500);
+   return json((data||[]).map((r:any)=>({id:r.id,opportunityType:r.opportunity_type,title:r.title,location:r.location,latitude:r.latitude,longitude:r.longitude,startsAt:r.starts_at,endsAt:r.ends_at,status:r.status,sourceUrl:r.source_url||"",confidence:r.confidence,estimatedDemand:r.estimated_demand,nearbySupply:r.nearby_supply,notes:r.notes||"",createdAt:r.created_at,updatedAt:r.updated_at})));
+  }
+  if(path==="/admin/opportunities"&&req.method==="POST") {
+   if(!["admin","super_admin"].includes(String(auth.role).toLowerCase())) return json({error:"Admin role required"},403);
+   const b=await req.json();
+   if(!["event","ev_charger","wash_service"].includes(b?.opportunityType)||!String(b?.title||"").trim()||!String(b?.location||"").trim()) return json({error:"Type, title and location are required"},400);
+   const payload={opportunity_type:b.opportunityType,title:String(b.title).trim(),location:String(b.location).trim(),starts_at:b.startsAt||null,ends_at:b.endsAt||null,status:["research","verified","contacted","active","closed"].includes(b.status)?b.status:"research",source_url:b.sourceUrl||null,confidence:["unverified","partially_verified","verified"].includes(b.confidence)?b.confidence:"unverified",estimated_demand:b.estimatedDemand==null||b.estimatedDemand===""?null:Number(b.estimatedDemand),nearby_supply:b.nearbySupply==null||b.nearbySupply===""?null:Number(b.nearbySupply),notes:String(b.notes||"").slice(0,5000),created_by:auth.user.id};
+   if((payload.estimated_demand!==null&&(!Number.isFinite(payload.estimated_demand)||payload.estimated_demand<0))||(payload.nearby_supply!==null&&(!Number.isFinite(payload.nearby_supply)||payload.nearby_supply<0))) return json({error:"Demand and supply estimates must be non-negative numbers"},400);
+   const {data,error}=await db.from("admin_opportunities").insert(payload).select("*").single();
+   if(error) return json({error:"Opportunity could not be saved"},500);
+   return json({id:data.id,opportunityType:data.opportunity_type,title:data.title,location:data.location,latitude:data.latitude,longitude:data.longitude,startsAt:data.starts_at,endsAt:data.ends_at,status:data.status,sourceUrl:data.source_url||"",confidence:data.confidence,estimatedDemand:data.estimated_demand,nearbySupply:data.nearby_supply,notes:data.notes||"",createdAt:data.created_at,updatedAt:data.updated_at},201);
+  }
+  const opp=path.match(/^\\/admin\\/opportunities\\/([^/]+)$/);
+  if(opp&&req.method==="PATCH") {
+   if(!["admin","super_admin"].includes(String(auth.role).toLowerCase())) return json({error:"Admin role required"},403);
+   const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
+   if(typeof b.status==="string"&&["research","verified","contacted","active","closed"].includes(b.status)) patch.status=b.status;
+   if(typeof b.notes==="string") patch.notes=b.notes.slice(0,5000);
+   if(typeof b.confidence==="string"&&["unverified","partially_verified","verified"].includes(b.confidence)) patch.confidence=b.confidence;
+   if(Object.keys(patch).length===1) return json({error:"No valid fields supplied"},400);
+   const {data,error}=await db.from("admin_opportunities").update(patch).eq("id",opp[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Opportunity update failed"},400);
+   return json({id:data.id,opportunityType:data.opportunity_type,title:data.title,location:data.location,latitude:data.latitude,longitude:data.longitude,startsAt:data.starts_at,endsAt:data.ends_at,status:data.status,sourceUrl:data.source_url||"",confidence:data.confidence,estimatedDemand:data.estimated_demand,nearbySupply:data.nearby_supply,notes:data.notes||"",createdAt:data.created_at,updatedAt:data.updated_at});
+  }
   const m=path.match(/^\/admin\/([a-z-]+)(?:\/([^/]+))?$/);
   if(req.method==="GET"&&m&&!m[2]) return await list(m[1]);
   if(req.method==="PATCH"&&m?.[2]) {
