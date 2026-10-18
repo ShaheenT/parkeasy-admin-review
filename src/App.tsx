@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import ResourcePage from './pages/ResourcePage'
 import LiveMap from './pages/LiveMap'
 import OpportunityIntelligence from './pages/OpportunityIntelligence'
+import Events from './pages/Events'
 import Integrations from './pages/Integrations'
 import Settings from './pages/Settings'
 import Notifications from './pages/Notifications'
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="kyc" element={<Kyc />} />
         <Route path="map" element={<LiveMap />} />
         <Route path="intelligence" element={<OpportunityIntelligence />} />
+        <Route path="events" element={<Events />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="integrations" element={<Integrations />} />
         <Route path="settings" element={<Settings />} />
