@@ -148,3 +148,20 @@ th,td{padding:10px 8px;border-bottom:1px solid var(--line);white-space:nowrap}.t
 .scout-no-targets{padding:13px;border:1px dashed var(--line);border-radius:10px;font-size:11px;line-height:1.6;color:var(--mut)}
 .scout-footnote{margin:0;color:var(--mut);font-size:10px;line-height:1.5}
 @media(max-width:700px){.scout-opportunities-head{flex-direction:column}.scout-target{grid-template-columns:28px minmax(0,1fr)}.scout-copy{grid-column:2;justify-self:start}.scout-target-title{align-items:flex-start;flex-direction:column;gap:5px}}
+
+
+/* Persistent ParkEasy Scout acquisition pipeline */
+.scout-stage-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.scout-stage-strip>div{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+.scout-stage-strip strong{font-family:var(--display);font-size:23px;font-weight:400;line-height:1;color:var(--accent-ink)}
+.scout-stage-strip span{font-size:10px;color:var(--mut)}
+.scout-workflow-target{align-items:start}
+.scout-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.scout-field>span{font-size:10px;color:var(--mut)}
+.scout-field input,.scout-field select{width:100%;min-width:0;min-height:34px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font-size:11px}
+.scout-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}
+.scout-notes-field{grid-column:1/-1}
+.scout-target-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px}
+.scout-target-actions small{margin-right:auto;color:var(--mut);font-size:10px}
+.scout-target-actions button{font-size:10px}
+@media(max-width:700px){.scout-stage-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.scout-detail-grid{grid-template-columns:1fr}.scout-notes-field{grid-column:auto}.scout-target-actions{justify-content:flex-start}.scout-target-actions small{width:100%}}
