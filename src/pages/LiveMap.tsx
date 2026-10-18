@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useResource } from '../components/useResource'
@@ -15,6 +15,13 @@ const COLORS: Record<string, string> = {
   inactive: '#fb7185',
 }
 
+type DemandCell = { key: string; lat: number; lng: number; supply: number; bookings: number; gap: boolean; names: string[] }
+
+const valueOf = (row: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) { const value = row[key]; if (value != null && String(value).trim()) return String(value).trim() }
+  return ''
+}
+
 /** Test-environment live bay map. Refreshes listings every 15 seconds. */
 export default function LiveMap() {
   const { rows, error, loading } = useResource('bays', 15000)
@@ -24,6 +31,9 @@ export default function LiveMap() {
   const el = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const markers = useRef<mapboxgl.Marker[]>([])
+  const demandMarkers = useRef<mapboxgl.Marker[]>([])
+  const [mapReady, setMapReady] = useState(false)
+  const [showDemand, setShowDemand] = useState(true)
 
   const locatedRows = rows.filter((bay) =>
     bay.lat != null && bay.lng != null &&
@@ -44,6 +54,45 @@ export default function LiveMap() {
   const lowBatteryDevices = devices.filter((device) => device.battery != null && Number.isFinite(Number(device.battery)) && Number(device.battery) <= 20)
   const pendingBookings = bookings.filter((booking) => ['pending', 'awaiting_payment', 'payment_pending'].includes(String(booking.status ?? '').toLowerCase()))
   const failedPayments = payments.filter((payment) => ['failed', 'declined', 'error'].includes(String(payment.status ?? '').toLowerCase()))
+  // Link real booking rows to their parking listing when an ID or listing name is present.
+  // Spatial cells are approximately 1.1 km across; they are a planning proxy, not search-intent data.
+  const demandCells = useMemo(() => {
+    const bayByKey = new Map<string, typeof rows[number]>()
+    rows.forEach((bay) => {
+      const raw = bay as Record<string, unknown>
+      for (const key of [String(bay.id ?? ''), String(bay.name ?? '')].filter(Boolean)) bayByKey.set(key.toLowerCase(), bay)
+      for (const field of ['bay_id', 'listing_id', 'parking_bay_id']) {
+        const alias = valueOf(raw, [field])
+        if (alias) bayByKey.set(alias.toLowerCase(), bay)
+      }
+    })
+    const cells = new Map<string, DemandCell>()
+    locatedRows.forEach((bay) => {
+      const lat = Number(bay.lat), lng = Number(bay.lng)
+      const key = Math.round(lat * 100) + ':' + Math.round(lng * 100)
+      const existing = cells.get(key)
+      if (existing) { existing.supply += ['active', 'available'].includes(String(bay.status ?? '').toLowerCase()) ? 1 : 0; existing.names.push(String(bay.name ?? 'Parking listing')) }
+      else cells.set(key, { key, lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100, supply: ['active', 'available'].includes(String(bay.status ?? '').toLowerCase()) ? 1 : 0, bookings: 0, gap: false, names: [String(bay.name ?? 'Parking listing')] })
+    })
+    let linkedBookings = 0
+    bookings.forEach((booking) => {
+      const raw = booking as Record<string, unknown>
+      const status = String(booking.status ?? '').toLowerCase()
+      if (!['confirmed', 'active', 'completed', 'complete'].includes(status)) return
+      const key = valueOf(raw, ['bay_id', 'listing_id', 'parking_bay_id', 'bay', 'listing', 'parking_bay']).toLowerCase()
+      const linkedBay = key ? bayByKey.get(key) : undefined
+      if (!linkedBay || linkedBay.lat == null || linkedBay.lng == null) return
+      const lat = Number(linkedBay.lat), lng = Number(linkedBay.lng)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+      const cellKey = Math.round(lat * 100) + ':' + Math.round(lng * 100)
+      const cell = cells.get(cellKey)
+      if (cell) { cell.bookings += 1; linkedBookings += 1 }
+    })
+    cells.forEach((cell) => { cell.gap = cell.bookings >= 3 && cell.supply <= 2 })
+    return { cells: Array.from(cells.values()).filter((cell) => cell.bookings > 0).sort((a, b) => Number(b.gap) - Number(a.gap) || b.bookings - a.bookings), linkedBookings }
+  }, [rows, bookings, locatedRows])
+  const supplyGapCount = demandCells.cells.filter((cell) => cell.gap).length
+
   const intelligenceItems = [
     ...(offlineDevices.length ? [{ level: 'critical', title: offlineDevices.length + ' device(s) offline', detail: 'Review device connectivity before relying on live device status.' }] : []),
     ...(failedPayments.length ? [{ level: 'critical', title: failedPayments.length + ' failed payment(s)', detail: 'Review payment records and booking outcomes before taking action.' }] : []),
@@ -67,6 +116,8 @@ export default function LiveMap() {
     map.current = instance
     instance.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right')
     instance.addControl(new mapboxgl.FullscreenControl(), 'top-right')
+    instance.on('load', () => setMapReady(true))
+    if (instance.loaded()) setMapReady(true)
     instance.on('style.load', () => {
       if (!instance.getSource('composite') || instance.getLayer('parkeasy-3d-buildings')) return
       const layers = instance.getStyle().layers ?? []
@@ -89,6 +140,8 @@ export default function LiveMap() {
     return () => {
       markers.current.forEach((marker) => marker.remove())
       markers.current = []
+      demandMarkers.current.forEach((marker) => marker.remove())
+      demandMarkers.current = []
       instance.remove()
       map.current = null
     }
@@ -124,6 +177,30 @@ export default function LiveMap() {
   // locatedRows is derived from the current API rows; refresh when the API refreshes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows])
+
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !mapReady) return
+    demandMarkers.current.forEach((marker) => marker.remove())
+    demandMarkers.current = []
+    if (!showDemand) return
+    demandMarkers.current = demandCells.cells.map((cell) => {
+      const node = document.createElement('div')
+      node.className = 'demand-map-marker' + (cell.gap ? ' gap' : '')
+      node.innerHTML = '<span>' + cell.bookings + '</span><small>' + (cell.gap ? 'SUPPLY GAP?' : 'BOOKING ACTIVITY') + '</small>'
+      const popup = document.createElement('div')
+      popup.className = 'parkeasy-map-popup'
+      const title = document.createElement('strong')
+      title.textContent = cell.gap ? 'Potential supply gap' : 'Booking activity area'
+      const detail = document.createElement('div')
+      detail.textContent = cell.bookings + ' confirmed/active/completed booking records linked to listings in this ~1.1 km cell; ' + cell.supply + ' active/available listing(s). This is a proxy, not proof of unmet demand.'
+      popup.append(title, detail)
+      return new mapboxgl.Marker({ element: node, anchor: 'center' })
+        .setLngLat([cell.lng, cell.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 18, maxWidth: '300px' }).setDOMContent(popup))
+        .addTo(instance)
+    })
+  }, [demandCells, mapReady, showDemand])
 
   if (!TOKEN) return <div className="card" data-testid="map-missing"><h3>Live map</h3><p className="lab">Mapbox token is not configured. {rows.length} parking listings received; {locatedRows.length} have coordinates.</p></div>
 
@@ -165,15 +242,23 @@ export default function LiveMap() {
         <div><span className="map-summary-dot unavailable" /><strong>{unavailableCount}</strong><span>Other statuses</span></div>
         <div className="map-summary-total"><strong>{locatedRows.length}</strong><span>Listings plotted</span></div>
       </div>
+      <div className="demand-toolbar">
+        <div><strong>Demand intelligence</strong><span>{demandCells.linkedBookings} booking record(s) linked to mapped listings · {supplyGapCount} potential supply-gap area(s)</span></div>
+        <button type="button" className={showDemand ? 'pri' : 'ghost'} aria-pressed={showDemand} onClick={() => setShowDemand((value) => !value)}>{showDemand ? 'Hide demand layer' : 'Show demand layer'}</button>
+      </div>
+      {demandCells.linkedBookings === 0 && <p className="lab demand-note">No booking records could be reliably linked to mapped listings. The demand layer will only display evidence-backed areas once booking rows contain a matching listing ID or name. It does not infer demand from map proximity alone.</p>}
       <div className="card live-map-card">
         <div ref={el} data-testid="map" className="map" aria-label="Interactive 3D map of ParkEasy parking listings" />
         <div className="map-legend" aria-label="Parking map legend">
           <strong>MAP LEGEND</strong>
+          {showDemand && <span><i className="demand-legend-dot" /> Booking activity</span>}
+          {showDemand && <span><i className="demand-gap-legend-dot" /> Potential supply gap</span>}
           <span><i className="available" /> Available / active</span>
           <span><i className="paused" /> Paused / pending</span>
           <span><i className="unavailable" /> Booked / unavailable / other</span>
         </div>
       </div>
+      <p className="demand-disclaimer">Supply-gap signals are rule-based indicators from linked booking records and currently available listings, not proof of unmet demand. Search impressions, rejected bookings and time-windowed utilization would improve accuracy.</p>
       <div className="live-map-footer">
         <span>{loading ? 'Loading listings…' : `Showing ${locatedRows.length} of ${rows.length} listings with valid coordinates`}</span>
         {rows.length > locatedRows.length && <span>{rows.length - locatedRows.length} listing(s) cannot be plotted until latitude and longitude are present.</span>}
