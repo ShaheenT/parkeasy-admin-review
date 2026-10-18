@@ -118,6 +118,101 @@ Deno.serve(async (req:Request)=>{
   if(!token) return json({error:"Sign in required"},401);
   const auth=await authorize(token); if(!auth) return json({error:"Invalid session or admin access denied"},401);
   if(req.method==="GET"&&path==="/auth/me") return json({id:auth.user.id,name:auth.user.user_metadata?.full_name||auth.user.email,email:auth.user.email,role:auth.role});
+  if(path==="/admin/event-organizers"&&req.method==="GET") {
+   const {data,error}=await db.from("event_organizers").select("*").order("created_at",{ascending:false}).limit(500);
+   if(error) return json({error:"Organisers could not be loaded"},500);
+   return json((data||[]).map((r:any)=>({...r})));
+  }
+  if(path==="/admin/event-organizers"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json();
+   if(!String(b?.organizationName||"").trim()||!String(b?.contactName||"").trim()||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(b?.contactEmail||""))) return json({error:"Organisation, contact name and valid email are required"},400);
+   const {data,error}=await db.from("event_organizers").insert({organization_name:String(b.organizationName).trim().slice(0,200),contact_name:String(b.contactName).trim().slice(0,200),contact_email:String(b.contactEmail).trim().toLowerCase().slice(0,320),contact_phone:String(b.contactPhone||"").trim().slice(0,40)||null,admin_notes:String(b.adminNotes||"").slice(0,5000),status:"pending_review"}).select("*").single();
+   if(error) return json({error:"Organiser could not be saved"},500);
+   return json(data,201);
+  }
+  const organizerMatch=path.match(/^\\/admin\\/event-organizers\\/([^/]+)$/);
+  if(organizerMatch&&req.method==="PATCH") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
+   if(typeof b.status==="string"&&["pending_review","approved","suspended","rejected"].includes(b.status)) patch.status=b.status;
+   if(typeof b.adminNotes==="string") patch.admin_notes=b.adminNotes.slice(0,5000);
+   if(Object.keys(patch).length===1) return json({error:"No valid fields supplied"},400);
+   const {data,error}=await db.from("event_organizers").update(patch).eq("id",organizerMatch[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Organiser update failed"},400);
+   return json(data);
+  }
+  if(path==="/admin/event-plans"&&req.method==="GET") {
+   const {data,error}=await db.from("event_subscription_plans").select("*").order("created_at",{ascending:false});
+   if(error) return json({error:"Subscription plans could not be loaded"},500);
+   return json(data||[]);
+  }
+  if(path==="/admin/event-plans"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const price=Number(b?.monthlyPriceZar);
+   if(!String(b?.name||"").trim()||!Number.isFinite(price)||price<0) return json({error:"Plan name and a non-negative monthly price are required"},400);
+   const limit=b.monthlyImpressionLimit==null||b.monthlyImpressionLimit===""?null:Number(b.monthlyImpressionLimit);
+   if(limit!==null&&(!Number.isInteger(limit)||limit<0)) return json({error:"Impression limit must be a non-negative whole number"},400);
+   const {data,error}=await db.from("event_subscription_plans").insert({name:String(b.name).trim().slice(0,100),monthly_price_zar:price,description:String(b.description||"").slice(0,3000),promoted_placement:!!b.promotedPlacement,monthly_impression_limit:limit,active:true}).select("*").single();
+   if(error) return json({error:"Plan could not be saved. Check that the name is unique."},400);
+   return json(data,201);
+  }
+  const planMatch=path.match(/^\\/admin\\/event-plans\\/([^/]+)$/);
+  if(planMatch&&req.method==="PATCH") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); if(typeof b.active!=="boolean") return json({error:"Active state is required"},400);
+   const {data,error}=await db.from("event_subscription_plans").update({active:b.active,updated_at:new Date().toISOString()}).eq("id",planMatch[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Plan update failed"},400);
+   return json(data);
+  }
+  if(path==="/admin/events"&&req.method==="GET") {
+   const {data,error}=await db.from("marketplace_events").select("*").order("starts_at",{ascending:true}).limit(500);
+   if(error) return json({error:"Events could not be loaded"},500);
+   const ids=[...(new Set((data||[]).map((r:any)=>r.organizer_id)))];
+   const {data:orgs}=await db.from("event_organizers").select("id,organization_name").in("id",ids.length?ids:["00000000-0000-0000-0000-000000000000"]);
+   const names=new Map((orgs||[]).map((o:any)=>[o.id,o.organization_name]));
+   return json((data||[]).map((r:any)=>({...r,organizer_name:names.get(r.organizer_id)||"Unknown organiser"})));
+  }
+  if(path==="/admin/events"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const start=Date.parse(b?.startsAt), end=Date.parse(b?.endsAt);
+   if(!String(b?.organizerId||"").trim()||!String(b?.title||"").trim()||!String(b?.venueName||"").trim()||!String(b?.address||"").trim()||!Number.isFinite(start)||!Number.isFinite(end)||end<=start) return json({error:"Organiser, title, venue, address and a valid end-after-start date range are required"},400);
+   const {data:org}=await db.from("event_organizers").select("id,status").eq("id",b.organizerId).maybeSingle();
+   if(!org) return json({error:"Select an existing organiser"},400);
+   const base=String(b.title).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,80)||"event";
+   const slug=base+"-"+crypto.randomUUID().slice(0,8);
+   const lat=b.latitude==null?null:Number(b.latitude), lng=b.longitude==null?null:Number(b.longitude);
+   if((lat!==null&&(!Number.isFinite(lat)||lat < -90||lat > 90))||(lng!==null&&(!Number.isFinite(lng)||lng < -180||lng > 180))) return json({error:"Latitude or longitude is invalid"},400);
+   const {data,error}=await db.from("marketplace_events").insert({organizer_id:b.organizerId,title:String(b.title).trim().slice(0,200),slug,category:String(b.category||"other").slice(0,60),description:String(b.description||"").slice(0,10000),venue_name:String(b.venueName).trim().slice(0,250),address:String(b.address).trim().slice(0,500),latitude:lat,longitude:lng,starts_at:new Date(start).toISOString(),ends_at:new Date(end).toISOString(),image_url:String(b.imageUrl||"").trim()||null,ticket_url:String(b.ticketUrl||"").trim()||null,status:"pending_review",promoted:false}).select("*").single();
+   if(error) return json({error:"Event could not be saved"},500);
+   return json({...data,organizer_name:org.status==="approved"?"Organiser pending name":"Organiser review required"},201);
+  }
+  const eventMatch=path.match(/^\\/admin\\/events\\/([^/]+)$/);
+  if(eventMatch&&req.method==="PATCH") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
+   if(typeof b.status==="string"&&["draft","pending_review","approved","rejected","cancelled","completed"].includes(b.status)) {
+    if(b.status==="approved") {
+     const {data:event}=await db.from("marketplace_events").select("organizer_id").eq("id",eventMatch[1]).maybeSingle();
+     if(!event) return json({error:"Event not found"},404);
+     const {data:org}=await db.from("event_organizers").select("status").eq("id",event.organizer_id).maybeSingle();
+     if(org?.status!=="approved") return json({error:"Approve the organiser before publishing its event"},409);
+     patch.reviewed_by=auth.user.id; patch.reviewed_at=new Date().toISOString();
+    }
+    patch.status=b.status;
+   }
+   if(typeof b.promoted==="boolean") {
+    const {data:event}=await db.from("marketplace_events").select("organizer_id,status").eq("id",eventMatch[1]).maybeSingle();
+    if(!event) return json({error:"Event not found"},404);
+    if(b.promoted&&event.status!=="approved") return json({error:"Only approved events can be promoted"},409);
+    patch.promoted=b.promoted;
+   }
+   if(Object.keys(patch).length===1) return json({error:"No valid fields supplied"},400);
+   const {data,error}=await db.from("marketplace_events").update(patch).eq("id",eventMatch[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Event update failed"},400);
+   const {data:org}=await db.from("event_organizers").select("organization_name").eq("id",data.organizer_id).maybeSingle();
+   return json({...data,organizer_name:org?.organization_name||"Unknown organiser"});
+  }
   if(req.method==="GET"&&path==="/admin/integrations") return json([
    {id:"slack",name:"Slack",description:"Booking, payout and device alerts; server-side webhook setup required.",connected:false,config:""},
    {id:"zoom",name:"Zoom",description:"Host onboarding calls; OAuth setup required.",connected:false},
