@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
-import { Bell, Building2, CalendarDays, CreditCard, FileCheck2, LayoutDashboard, LogOut, MapPin, Menu, MessageSquare, Monitor, Moon, Plug, Settings, ShieldCheck, Sparkles, UserCog, Users, Wallet, X } from 'lucide-react'
+import { Bell, Building2, CalendarDays, CreditCard, FileCheck2, LayoutDashboard, LogOut, MapPin, Menu, MessageSquare, Monitor, Moon, Plug, Settings, ShieldCheck, Sparkles, UserCog, Users, Wallet, X, Ticket } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { MOCK } from '../lib/api'
 
@@ -13,7 +13,7 @@ const NAV: [string, Item[]][] = [
   ]],
   ['Finance & operations', [
     ['/payments', 'Payments', CreditCard], ['/payouts', 'Payouts', Wallet], ['/kyc', 'KYC / Risk', ShieldCheck],
-    ['/devices', 'Devices', Monitor], ['/map', 'Live Map', MapPin], ['/intelligence', 'Opportunity Radar', Sparkles], ['/notifications', 'Notifications', Bell], ['/support', 'Support Inbox', MessageSquare],
+    ['/devices', 'Devices', Monitor], ['/map', 'Live Map', MapPin], ['/events', 'Event Marketplace', Ticket], ['/intelligence', 'Opportunity Radar', Sparkles], ['/notifications', 'Notifications', Bell], ['/support', 'Support Inbox', MessageSquare],
   ]],
   ['Others', [['/integrations', 'Integrations', Plug], ['/settings', 'Settings', Settings]]],
 ]
