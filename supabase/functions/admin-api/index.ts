@@ -137,7 +137,7 @@ Deno.serve(async (req:Request)=>{
    if(error) return json({error:"Organiser could not be saved"},500);
    return json(data,201);
   }
-  const organizerMatch=path.match(/^\\/admin\\/event-organizers\\/([^/]+)$/);
+  const organizerMatch=path.startsWith("/admin/event-organizers/") ? [null,path.slice("/admin/event-organizers/".length)] : null;
   if(organizerMatch&&req.method==="PATCH") {
    if(auth.role!=="admin") return json({error:"Admin role required"},403);
    const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
@@ -163,7 +163,7 @@ Deno.serve(async (req:Request)=>{
    if(error) return json({error:"Plan could not be saved. Check that the name is unique."},400);
    return json(data,201);
   }
-  const planMatch=path.match(/^\\/admin\\/event-plans\\/([^/]+)$/);
+  const planMatch=path.startsWith("/admin/event-plans/") ? [null,path.slice("/admin/event-plans/".length)] : null;
   if(planMatch&&req.method==="PATCH") {
    if(auth.role!=="admin") return json({error:"Admin role required"},403);
    const b=await req.json(); if(typeof b.active!=="boolean") return json({error:"Active state is required"},400);
@@ -193,7 +193,7 @@ Deno.serve(async (req:Request)=>{
    if(error) return json({error:"Event could not be saved"},500);
    return json({...data,organizer_name:org.organization_name},201);
   }
-  const eventMatch=path.match(/^\\/admin\\/events\\/([^/]+)$/);
+  const eventMatch=path.startsWith("/admin/events/") ? [null,path.slice("/admin/events/".length)] : null;
   if(eventMatch&&req.method==="PATCH") {
    if(auth.role!=="admin") return json({error:"Admin role required"},403);
    const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
