@@ -29,6 +29,22 @@ async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const wait = <T,>(v: T) => new Promise<T>((r) => setTimeout(() => r(structuredClone(v)), 120))
 
+export type OpportunityType = 'event' | 'ev_charger' | 'wash_service'
+export type Opportunity = {
+ id: string; opportunityType: OpportunityType; title: string; location: string; latitude: number | null; longitude: number | null;
+ startsAt: string | null; endsAt: string | null; status: string; sourceUrl: string; confidence: string;
+ estimatedDemand: number | null; nearbySupply: number | null; notes: string; createdAt: string; updatedAt: string
+}
+export type OpportunityCreate = Omit<Opportunity, 'id' | 'latitude' | 'longitude' | 'createdAt' | 'updatedAt'>
+export type OpportunityUpdate = { status?: string; notes?: string; confidence?: string }
+const opportunityFromDb = (row: Record<string, unknown>): Opportunity => ({
+ id: String(row.id), opportunityType: String(row.opportunity_type) as OpportunityType, title: String(row.title ?? ''),
+ location: String(row.location ?? ''), latitude: row.latitude == null ? null : Number(row.latitude), longitude: row.longitude == null ? null : Number(row.longitude),
+ startsAt: row.starts_at ? String(row.starts_at) : null, endsAt: row.ends_at ? String(row.ends_at) : null, status: String(row.status ?? 'research'),
+ sourceUrl: String(row.source_url ?? ''), confidence: String(row.confidence ?? 'unverified'),
+ estimatedDemand: row.estimated_demand == null ? null : Number(row.estimated_demand), nearbySupply: row.nearby_supply == null ? null : Number(row.nearby_supply),
+ notes: String(row.notes ?? ''), createdAt: String(row.created_at ?? ''), updatedAt: String(row.updated_at ?? '')
+})
 export type ScoutWorkflowStatus = 'identified' | 'researched' | 'host_contacted' | 'listing_onboarded'
 export type ScoutTarget = {
   id: string
@@ -121,6 +137,20 @@ export const api = {
       return wait(i)
     }
     return http(`/admin/integrations/${id}`, { method: 'PUT', body: JSON.stringify({ connected, config }) })
+  },
+  async opportunities(): Promise<Opportunity[]> {
+    if (MOCK) return wait([] as Opportunity[])
+    const rows = await http<Record<string, unknown>[]>('/admin/opportunities')
+    return rows.map(opportunityFromDb)
+  },
+  async createOpportunity(input: Omit<OpportunityCreate, 'latitude' | 'longitude'>): Promise<Opportunity> {
+    if (MOCK) throw new Error('Opportunity tracking requires the connected test database.')
+    const body = { ...input, opportunityType: input.opportunityType, startsAt: input.startsAt || null, endsAt: input.endsAt || null }
+    return opportunityFromDb(await http<Record<string, unknown>>('/admin/opportunities', { method: 'POST', body: JSON.stringify(body) }))
+  },
+  async updateOpportunity(id: string, patch: OpportunityUpdate): Promise<Opportunity> {
+    if (MOCK) throw new Error('Opportunity tracking requires the connected test database.')
+    return opportunityFromDb(await http<Record<string, unknown>>('/admin/opportunities/' + id, { method: 'PATCH', body: JSON.stringify(patch) }))
   },
   async scoutTargets(): Promise<ScoutTarget[]> {
     if (MOCK) return wait([] as ScoutTarget[])
