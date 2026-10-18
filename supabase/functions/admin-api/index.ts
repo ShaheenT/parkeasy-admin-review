@@ -114,10 +114,139 @@ Deno.serve(async (req:Request)=>{
    if(!admin||!["admin","support","super_admin"].includes(String(admin.role).toLowerCase())) return json({error:"This account is not authorised for the admin dashboard."},403);
    return json({token:data.session.access_token,user:{id:data.user.id,name:data.user.user_metadata?.full_name||data.user.email,email:data.user.email,role:roleForUi(admin.role)}});
   }
+  if(req.method==="GET"&&path==="/public/events") {
+   const now=new Date().toISOString();
+   const {data,error}=await db.from("marketplace_events").select("id,title,slug,category,description,venue_name,address,latitude,longitude,starts_at,ends_at,image_url,ticket_url,promoted,event_organizers!inner(status)").eq("status","approved").eq("event_organizers.status","approved").gt("ends_at",now).order("promoted",{ascending:false}).order("starts_at",{ascending:true}).limit(200);
+   if(error) return json({error:"Public events could not be loaded"},500);
+   return json(data||[]);
+  }
   const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if(!token) return json({error:"Sign in required"},401);
   const auth=await authorize(token); if(!auth) return json({error:"Invalid session or admin access denied"},401);
   if(req.method==="GET"&&path==="/auth/me") return json({id:auth.user.id,name:auth.user.user_metadata?.full_name||auth.user.email,email:auth.user.email,role:auth.role});
+  if(path==="/admin/event-organizers"&&req.method==="GET") {
+   const {data,error}=await db.from("event_organizers").select("*").order("created_at",{ascending:false}).limit(500);
+   if(error) return json({error:"Organisers could not be loaded"},500);
+   return json((data||[]).map((r:any)=>({...r})));
+  }
+  if(path==="/admin/event-organizers"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json();
+   if(!String(b?.organizationName||"").trim()||!String(b?.contactName||"").trim()||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(b?.contactEmail||""))) return json({error:"Organisation, contact name and valid email are required"},400);
+   const {data,error}=await db.from("event_organizers").insert({organization_name:String(b.organizationName).trim().slice(0,200),contact_name:String(b.contactName).trim().slice(0,200),contact_email:String(b.contactEmail).trim().toLowerCase().slice(0,320),contact_phone:String(b.contactPhone||"").trim().slice(0,40)||null,admin_notes:String(b.adminNotes||"").slice(0,5000),status:"pending_review"}).select("*").single();
+   if(error) return json({error:"Organiser could not be saved"},500);
+   return json(data,201);
+  }
+  const organizerMatch=path.startsWith("/admin/event-organizers/") ? [null,path.slice("/admin/event-organizers/".length)] : null;
+  if(organizerMatch&&req.method==="PATCH") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
+   if(typeof b.status==="string"&&["pending_review","approved","suspended","rejected"].includes(b.status)) patch.status=b.status;
+   if(typeof b.adminNotes==="string") patch.admin_notes=b.adminNotes.slice(0,5000);
+   if(Object.keys(patch).length===1) return json({error:"No valid fields supplied"},400);
+   const {data,error}=await db.from("event_organizers").update(patch).eq("id",organizerMatch[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Organiser update failed"},400);
+   return json(data);
+  }
+  if(path==="/admin/event-subscriptions"&&req.method==="GET") {
+   const {data,error}=await db.from("event_subscriptions").select("*").order("created_at",{ascending:false}).limit(500);
+   if(error) return json({error:"Organiser subscriptions could not be loaded"},500);
+   const orgIds=[...(new Set((data||[]).map((r:any)=>r.organizer_id)))];
+   const planIds=[...(new Set((data||[]).map((r:any)=>r.plan_id)))];
+   const [{data:orgs},{data:plans}]=await Promise.all([
+    db.from("event_organizers").select("id,organization_name,contact_email").in("id",orgIds.length?orgIds:["00000000-0000-0000-0000-000000000000"]),
+    db.from("event_subscription_plans").select("id,name,monthly_price_zar").in("id",planIds.length?planIds:["00000000-0000-0000-0000-000000000000"])
+   ]);
+   const om=new Map((orgs||[]).map((r:any)=>[r.id,r])); const pm=new Map((plans||[]).map((r:any)=>[r.id,r]));
+   return json((data||[]).map((r:any)=>({ ...r, organizer_name:(om.get(r.organizer_id) as any)?.organization_name||"Unknown organiser", organizer_email:(om.get(r.organizer_id) as any)?.contact_email||"", plan_name:(pm.get(r.plan_id) as any)?.name||"Unknown plan", monthly_price_zar:(pm.get(r.plan_id) as any)?.monthly_price_zar??0 })));
+  }
+  if(path==="/admin/event-subscriptions"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json();
+   if(!String(b?.organizerId||"").trim()||!String(b?.planId||"").trim()) return json({error:"Select an organiser and subscription plan"},400);
+   const [{data:org},{data:plan},{data:existing}]=await Promise.all([
+    db.from("event_organizers").select("id,status").eq("id",b.organizerId).maybeSingle(),
+    db.from("event_subscription_plans").select("id,active").eq("id",b.planId).maybeSingle(),
+    db.from("event_subscriptions").select("id").eq("organizer_id",b.organizerId).in("status",["pending","trialing","active","past_due"]).limit(1)
+   ]);
+   if(!org||org.status!=="approved") return json({error:"Approve the organiser before assigning a subscription"},409);
+   if(!plan||!plan.active) return json({error:"Select an active subscription plan"},409);
+   if(existing?.length) return json({error:"This organiser already has a pending or active subscription"},409);
+   const {data,error}=await db.from("event_subscriptions").insert({organizer_id:b.organizerId,plan_id:b.planId,status:"pending",admin_notes:"Awaiting billing setup and verified payment."}).select("*").single();
+   if(error) return json({error:"Subscription could not be created"},500);
+   return json(data,201);
+  }
+  if(path==="/admin/event-plans"&&req.method==="GET") {
+   const {data,error}=await db.from("event_subscription_plans").select("*").order("created_at",{ascending:false});
+   if(error) return json({error:"Subscription plans could not be loaded"},500);
+   return json(data||[]);
+  }
+  if(path==="/admin/event-plans"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const price=Number(b?.monthlyPriceZar);
+   if(!String(b?.name||"").trim()||!Number.isFinite(price)||price<0) return json({error:"Plan name and a non-negative monthly price are required"},400);
+   const limit=b.monthlyImpressionLimit==null||b.monthlyImpressionLimit===""?null:Number(b.monthlyImpressionLimit);
+   if(limit!==null&&(!Number.isInteger(limit)||limit<0)) return json({error:"Impression limit must be a non-negative whole number"},400);
+   const {data,error}=await db.from("event_subscription_plans").insert({name:String(b.name).trim().slice(0,100),monthly_price_zar:price,description:String(b.description||"").slice(0,3000),promoted_placement:!!b.promotedPlacement,monthly_impression_limit:limit,active:true}).select("*").single();
+   if(error) return json({error:"Plan could not be saved. Check that the name is unique."},400);
+   return json(data,201);
+  }
+  const planMatch=path.startsWith("/admin/event-plans/") ? [null,path.slice("/admin/event-plans/".length)] : null;
+  if(planMatch&&req.method==="PATCH") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); if(typeof b.active!=="boolean") return json({error:"Active state is required"},400);
+   const {data,error}=await db.from("event_subscription_plans").update({active:b.active,updated_at:new Date().toISOString()}).eq("id",planMatch[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Plan update failed"},400);
+   return json(data);
+  }
+  if(path==="/admin/events"&&req.method==="GET") {
+   const {data,error}=await db.from("marketplace_events").select("*").order("starts_at",{ascending:true}).limit(500);
+   if(error) return json({error:"Events could not be loaded"},500);
+   const ids=[...(new Set((data||[]).map((r:any)=>r.organizer_id)))];
+   const {data:orgs}=await db.from("event_organizers").select("id,organization_name").in("id",ids.length?ids:["00000000-0000-0000-0000-000000000000"]);
+   const names=new Map((orgs||[]).map((o:any)=>[o.id,o.organization_name]));
+   return json((data||[]).map((r:any)=>({...r,organizer_name:names.get(r.organizer_id)||"Unknown organiser"})));
+  }
+  if(path==="/admin/events"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const start=Date.parse(b?.startsAt), end=Date.parse(b?.endsAt);
+   if(!String(b?.organizerId||"").trim()||!String(b?.title||"").trim()||!String(b?.venueName||"").trim()||!String(b?.address||"").trim()||!Number.isFinite(start)||!Number.isFinite(end)||end<=start) return json({error:"Organiser, title, venue, address and a valid end-after-start date range are required"},400);
+   const {data:org}=await db.from("event_organizers").select("id,status,organization_name").eq("id",b.organizerId).maybeSingle();
+   if(!org) return json({error:"Select an existing organiser"},400);
+   const base=String(b.title).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,80)||"event";
+   const slug=base+"-"+crypto.randomUUID().slice(0,8);
+   const lat=b.latitude==null?null:Number(b.latitude), lng=b.longitude==null?null:Number(b.longitude);
+   if((lat!==null&&(!Number.isFinite(lat)||lat < -90||lat > 90))||(lng!==null&&(!Number.isFinite(lng)||lng < -180||lng > 180))) return json({error:"Latitude or longitude is invalid"},400);
+   const {data,error}=await db.from("marketplace_events").insert({organizer_id:b.organizerId,title:String(b.title).trim().slice(0,200),slug,category:String(b.category||"other").slice(0,60),description:String(b.description||"").slice(0,10000),venue_name:String(b.venueName).trim().slice(0,250),address:String(b.address).trim().slice(0,500),latitude:lat,longitude:lng,starts_at:new Date(start).toISOString(),ends_at:new Date(end).toISOString(),image_url:String(b.imageUrl||"").trim()||null,ticket_url:String(b.ticketUrl||"").trim()||null,status:"pending_review",promoted:false}).select("*").single();
+   if(error) return json({error:"Event could not be saved"},500);
+   return json({...data,organizer_name:org.organization_name},201);
+  }
+  const eventMatch=path.startsWith("/admin/events/") ? [null,path.slice("/admin/events/".length)] : null;
+  if(eventMatch&&req.method==="PATCH") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json(); const patch:any={updated_at:new Date().toISOString()};
+   if(typeof b.status==="string"&&["draft","pending_review","approved","rejected","cancelled","completed"].includes(b.status)) {
+    if(b.status==="approved") {
+     const {data:event}=await db.from("marketplace_events").select("organizer_id").eq("id",eventMatch[1]).maybeSingle();
+     if(!event) return json({error:"Event not found"},404);
+     const {data:org}=await db.from("event_organizers").select("status").eq("id",event.organizer_id).maybeSingle();
+     if(org?.status!=="approved") return json({error:"Approve the organiser before publishing its event"},409);
+     patch.reviewed_by=auth.user.id; patch.reviewed_at=new Date().toISOString();
+    }
+    patch.status=b.status;
+   }
+   if(typeof b.promoted==="boolean") {
+    const {data:event}=await db.from("marketplace_events").select("organizer_id,status").eq("id",eventMatch[1]).maybeSingle();
+    if(!event) return json({error:"Event not found"},404);
+    if(b.promoted&&event.status!=="approved") return json({error:"Only approved events can be promoted"},409);
+    patch.promoted=b.promoted;
+   }
+   if(Object.keys(patch).length===1) return json({error:"No valid fields supplied"},400);
+   const {data,error}=await db.from("marketplace_events").update(patch).eq("id",eventMatch[1]).select("*").maybeSingle();
+   if(error||!data) return json({error:"Event update failed"},400);
+   const {data:org}=await db.from("event_organizers").select("organization_name").eq("id",data.organizer_id).maybeSingle();
+   return json({...data,organizer_name:org?.organization_name||"Unknown organiser"});
+  }
   if(req.method==="GET"&&path==="/admin/integrations") return json([
    {id:"slack",name:"Slack",description:"Booking, payout and device alerts; server-side webhook setup required.",connected:false,config:""},
    {id:"zoom",name:"Zoom",description:"Host onboarding calls; OAuth setup required.",connected:false},
