@@ -15,13 +15,13 @@ npm run dev               # http://localhost:5173  (demo login: admin@parkeasy.c
 ## Environment
 | Variable | Purpose |
 |---|---|
-| `VITE_API_URL` | Your ParkEasy API base URL. Empty = built-in mock data |
-| `VITE_USE_MOCK` | `true` forces mock data even when an API URL is set |
+| `VITE_API_URL` | ParkEasy admin Edge Function URL. Empty = built-in mock data |
+| `VITE_SUPABASE_ANON_KEY` | Public/publishable key for the Supabase project hosting the Edge Function; never use a service-role key in the browser |\n| `VITE_USE_MOCK` | `true` forces mock data even when an API URL is set |
 | `VITE_MAPBOX_TOKEN` | Public Mapbox token (`pk.…`) for the Live Map |
 
 ## Architecture
 ```
-src/lib/api.ts        fetch layer (Bearer token, 401 -> auto logout, mock fallback)
+src/lib/api.ts        fetch layer (Supabase Edge Function, bearer token, 401 -> auto logout, mock fallback)\nsupabase/functions/admin-api/index.ts  server-side admin role checks and test-project data mapping
 src/lib/resources.ts  one config per table: columns + row actions (add a resource here)
 src/lib/mock.ts       demo data     src/lib/stats.ts  dashboard maths
 src/auth/             AuthContext (login, logout, session restore)
