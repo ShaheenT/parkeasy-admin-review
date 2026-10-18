@@ -15,7 +15,7 @@ const COLORS: Record<string, string> = {
   inactive: '#fb7185',
 }
 
-type DemandCell = { key: string; lat: number; lng: number; supply: number; bookings: number; gap: boolean; names: string[] }
+type DemandCell = { key: string; lat: number; lng: number; supply: number; bookings: number; gap: boolean; names: string[]; targetScore: number }
 
 const valueOf = (row: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) { const value = row[key]; if (value != null && String(value).trim()) return String(value).trim() }
@@ -34,6 +34,7 @@ export default function LiveMap() {
   const demandMarkers = useRef<mapboxgl.Marker[]>([])
   const [mapReady, setMapReady] = useState(false)
   const [showDemand, setShowDemand] = useState(true)
+  const [copiedTarget, setCopiedTarget] = useState('')
 
   const locatedRows = rows.filter((bay) =>
     bay.lat != null && bay.lng != null &&
@@ -72,7 +73,7 @@ export default function LiveMap() {
       const key = Math.round(lat * 100) + ':' + Math.round(lng * 100)
       const existing = cells.get(key)
       if (existing) { existing.supply += ['active', 'available'].includes(String(bay.status ?? '').toLowerCase()) ? 1 : 0; existing.names.push(String(bay.name ?? 'Parking listing')) }
-      else cells.set(key, { key, lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100, supply: ['active', 'available'].includes(String(bay.status ?? '').toLowerCase()) ? 1 : 0, bookings: 0, gap: false, names: [String(bay.name ?? 'Parking listing')] })
+      else cells.set(key, { key, lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100, supply: ['active', 'available'].includes(String(bay.status ?? '').toLowerCase()) ? 1 : 0, bookings: 0, gap: false, names: [String(bay.name ?? 'Parking listing')], targetScore: 0 })
     })
     let linkedBookings = 0
     bookings.forEach((booking) => {
@@ -88,10 +89,21 @@ export default function LiveMap() {
       const cell = cells.get(cellKey)
       if (cell) { cell.bookings += 1; linkedBookings += 1 }
     })
-    cells.forEach((cell) => { cell.gap = cell.bookings >= 3 && cell.supply <= 2 })
-    return { cells: Array.from(cells.values()).filter((cell) => cell.bookings > 0).sort((a, b) => Number(b.gap) - Number(a.gap) || b.bookings - a.bookings), linkedBookings }
+    cells.forEach((cell) => {
+      cell.gap = cell.bookings >= 3 && cell.supply <= 2
+      // Transparent prioritisation: booking volume plus scarcity, capped to keep scores readable.
+      cell.targetScore = cell.bookings > 0 ? Math.min(100, Math.round((cell.bookings * 12) / (cell.supply + 1) + Math.min(cell.bookings, 5) * 4)) : 0
+    })
+    return { cells: Array.from(cells.values()).filter((cell) => cell.bookings > 0).sort((a, b) => Number(b.gap) - Number(a.gap) || b.targetScore - a.targetScore || b.bookings - a.bookings), linkedBookings }
   }, [rows, bookings, locatedRows])
   const supplyGapCount = demandCells.cells.filter((cell) => cell.gap).length
+  const scoutTargets = demandCells.cells.filter((cell) => cell.gap).slice(0, 5)
+  const formatTargetLocation = (cell: DemandCell) => `${cell.lat.toFixed(2)}, ${cell.lng.toFixed(2)}`
+  const scoutBrief = (cell: DemandCell) => `PARKEASY SCOUT — HOST ACQUISITION TARGET\nMap zone: ${formatTargetLocation(cell)} (approx. 1 km planning cell)\nPriority score: ${cell.targetScore}/100 (rule-based)\nLinked booking records: ${cell.bookings}\nActive/available listings in zone: ${cell.supply}\nOpportunity: recruit additional private/residential parking hosts in and around this zone.\nValidation: confirm local demand, access, safety, pricing and host availability before onboarding.\nNote: booking activity is a proxy; it does not prove unmet demand.`
+  const copyScoutBrief = async (cell: DemandCell) => {
+    try { await navigator.clipboard.writeText(scoutBrief(cell)); setCopiedTarget(cell.key) }
+    catch { setCopiedTarget('') }
+  }
 
   const intelligenceItems = [
     ...(offlineDevices.length ? [{ level: 'critical', title: offlineDevices.length + ' device(s) offline', detail: 'Review device connectivity before relying on live device status.' }] : []),
@@ -246,6 +258,18 @@ export default function LiveMap() {
         <div><strong>Demand intelligence</strong><span>{demandCells.linkedBookings} booking record(s) linked to mapped listings · {supplyGapCount} potential supply-gap area(s)</span></div>
         <button type="button" className={showDemand ? 'pri' : 'ghost'} aria-pressed={showDemand} onClick={() => setShowDemand((value) => !value)}>{showDemand ? 'Hide demand layer' : 'Show demand layer'}</button>
       </div>
+      {demandCells.linkedBookings > 0 && <section className="scout-opportunities" aria-label="ParkEasy Scout host acquisition targets">
+        <div className="scout-opportunities-head">
+          <div><span className="intelligence-eyebrow">PARKEASY SCOUT</span><h3>Host acquisition opportunities</h3><p>Ranked from linked booking activity and active listing supply. Target zones are approximate map cells, not official neighbourhood boundaries.</p></div>
+          <span className="scout-count">{scoutTargets.length} priority target(s)</span>
+        </div>
+        {scoutTargets.length ? <div className="scout-target-list">{scoutTargets.map((cell, index) => <article className="scout-target" key={cell.key}>
+          <div className="scout-rank">{String(index + 1).padStart(2, '0')}</div>
+          <div className="scout-target-main"><div className="scout-target-title"><strong>Recruit hosts near {formatTargetLocation(cell)}</strong><span className="scout-priority">PRIORITY {cell.targetScore}</span></div><p>{cell.bookings} linked bookings · {cell.supply} active/available listing(s) · approx. 1 km zone</p><small>Suggested action: scout private driveways, residential parking and small off-street lots; verify availability and permissions before listing.</small></div>
+          <button type="button" className="ghost scout-copy" onClick={() => void copyScoutBrief(cell)}><span>{copiedTarget === cell.key ? 'Copied' : 'Copy Scout brief'}</span></button>
+        </article>)}</div> : <div className="scout-no-targets">No zones currently meet the priority rule (at least 3 linked bookings and no more than 2 active/available listings). Booking-active zones remain visible on the map for monitoring.</div>}
+        <p className="scout-footnote">Priority score is a transparent heuristic, not a forecast. Validate on-the-ground demand before investing time in recruitment.</p>
+      </section>}
       {demandCells.linkedBookings === 0 && <p className="lab demand-note">No booking records could be reliably linked to mapped listings. The demand layer will only display evidence-backed areas once booking rows contain a matching listing ID or name. It does not infer demand from map proximity alone.</p>}
       <div className="card live-map-card">
         <div ref={el} data-testid="map" className="map" aria-label="Interactive 3D map of ParkEasy parking listings" />
@@ -258,7 +282,7 @@ export default function LiveMap() {
           <span><i className="unavailable" /> Booked / unavailable / other</span>
         </div>
       </div>
-      <p className="demand-disclaimer">Supply-gap signals are rule-based indicators from linked booking records and currently available listings, not proof of unmet demand. Search impressions, rejected bookings and time-windowed utilization would improve accuracy.</p>
+      <p className="demand-disclaimer">Supply-gap signals and Scout priorities are rule-based indicators from linked booking records and currently available listings, not proof of unmet demand. Search impressions, rejected bookings and time-windowed utilization would improve accuracy.</p>
       <div className="live-map-footer">
         <span>{loading ? 'Loading listings…' : `Showing ${locatedRows.length} of ${rows.length} listings with valid coordinates`}</span>
         {rows.length > locatedRows.length && <span>{rows.length - locatedRows.length} listing(s) cannot be plotted until latitude and longitude are present.</span>}
