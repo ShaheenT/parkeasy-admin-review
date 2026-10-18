@@ -148,6 +148,34 @@ Deno.serve(async (req:Request)=>{
    if(error||!data) return json({error:"Organiser update failed"},400);
    return json(data);
   }
+  if(path==="/admin/event-subscriptions"&&req.method==="GET") {
+   const {data,error}=await db.from("event_subscriptions").select("*").order("created_at",{ascending:false}).limit(500);
+   if(error) return json({error:"Organiser subscriptions could not be loaded"},500);
+   const orgIds=[...(new Set((data||[]).map((r:any)=>r.organizer_id)))];
+   const planIds=[...(new Set((data||[]).map((r:any)=>r.plan_id)))];
+   const [{data:orgs},{data:plans}]=await Promise.all([
+    db.from("event_organizers").select("id,organization_name,contact_email").in("id",orgIds.length?orgIds:["00000000-0000-0000-0000-000000000000"]),
+    db.from("event_subscription_plans").select("id,name,monthly_price_zar").in("id",planIds.length?planIds:["00000000-0000-0000-0000-000000000000"])
+   ]);
+   const om=new Map((orgs||[]).map((r:any)=>[r.id,r])); const pm=new Map((plans||[]).map((r:any)=>[r.id,r]));
+   return json((data||[]).map((r:any)=>({ ...r, organizer_name:(om.get(r.organizer_id) as any)?.organization_name||"Unknown organiser", organizer_email:(om.get(r.organizer_id) as any)?.contact_email||"", plan_name:(pm.get(r.plan_id) as any)?.name||"Unknown plan", monthly_price_zar:(pm.get(r.plan_id) as any)?.monthly_price_zar??0 })));
+  }
+  if(path==="/admin/event-subscriptions"&&req.method==="POST") {
+   if(auth.role!=="admin") return json({error:"Admin role required"},403);
+   const b=await req.json();
+   if(!String(b?.organizerId||"").trim()||!String(b?.planId||"").trim()) return json({error:"Select an organiser and subscription plan"},400);
+   const [{data:org},{data:plan},{data:existing}]=await Promise.all([
+    db.from("event_organizers").select("id,status").eq("id",b.organizerId).maybeSingle(),
+    db.from("event_subscription_plans").select("id,active").eq("id",b.planId).maybeSingle(),
+    db.from("event_subscriptions").select("id").eq("organizer_id",b.organizerId).in("status",["pending","trialing","active","past_due"]).limit(1)
+   ]);
+   if(!org||org.status!=="approved") return json({error:"Approve the organiser before assigning a subscription"},409);
+   if(!plan||!plan.active) return json({error:"Select an active subscription plan"},409);
+   if(existing?.length) return json({error:"This organiser already has a pending or active subscription"},409);
+   const {data,error}=await db.from("event_subscriptions").insert({organizer_id:b.organizerId,plan_id:b.planId,status:"pending",admin_notes:"Awaiting billing setup and verified payment."}).select("*").single();
+   if(error) return json({error:"Subscription could not be created"},500);
+   return json(data,201);
+  }
   if(path==="/admin/event-plans"&&req.method==="GET") {
    const {data,error}=await db.from("event_subscription_plans").select("*").order("created_at",{ascending:false});
    if(error) return json({error:"Subscription plans could not be loaded"},500);
