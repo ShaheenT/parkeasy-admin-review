@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import ResourcePage from './pages/ResourcePage'
 import LiveMap from './pages/LiveMap'
+import OpportunityIntelligence from './pages/OpportunityIntelligence'
 import Integrations from './pages/Integrations'
 import Settings from './pages/Settings'
 import Notifications from './pages/Notifications'
@@ -29,6 +30,7 @@ export default function App() {
         {TABLES.map((k) => <Route key={k} path={k} element={<ResourcePage resource={k} title={RESOURCES[k].title} />} />)}
         <Route path="kyc" element={<Kyc />} />
         <Route path="map" element={<LiveMap />} />
+        <Route path="intelligence" element={<OpportunityIntelligence />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="integrations" element={<Integrations />} />
         <Route path="settings" element={<Settings />} />
