@@ -1,0 +1,39 @@
+name: CI/CD
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: npm run build
+        env: { VITE_USE_MOCK: 'true' }
+      - run: npx playwright install --with-deps chromium
+      - name: Start app on mock data
+        run: |
+          VITE_USE_MOCK=true VITE_API_URL= npm run dev -- --host 127.0.0.1 --port 5173 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:5173 >/dev/null && break; sleep 1; done
+      - run: npm run test:e2e
+      - run: npm run test:bdd
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: reports, path: "playwright-report\nreports" }
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm i -g vercel@latest
+      - run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
