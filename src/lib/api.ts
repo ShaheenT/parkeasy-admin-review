@@ -16,7 +16,8 @@ export const tokenStore = {
 export const UNAUTHORIZED_EVENT = 'parkeasy:unauthorized'
 
 async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const target = `${BASE}?path=${encodeURIComponent(path)}`
+  const res = await fetch(target, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {}), ...init.headers },
   })
