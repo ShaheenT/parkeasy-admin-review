@@ -28,7 +28,7 @@ export default function Dashboard() {
     const queue = d.payouts.filter((p) => p.status === 'queued').reduce((a, p) => a + Number(p.amount), 0)
     const occupancy = d.bays.map((b) => b.occupancy).filter((v) => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number)
     const occ = occupancy.length ? Math.round(occupancy.reduce((a, b) => a + b, 0) / occupancy.length) : null
-    return { bookings, gross, commission, hostHeld, queue, occ, series: revenueSeries(bookings, range, d.payouts.filter((p) => p.status === 'paid').reduce((a, p) => a + Number(p.amount), 0)), status: statusCounts(bookings), heat: heatmap(bookings) }
+    return { bookings, gross, commission, hostHeld, queue, occ, series: revenueSeries(paidBookings, range, d.payouts.filter((p) => p.status === 'paid').reduce((a, p) => a + Number(p.amount), 0)), status: statusCounts(bookings), heat: heatmap(bookings) }
   }, [d, range])
 
   if (error) return <div className="err" role="alert">{error}</div>
