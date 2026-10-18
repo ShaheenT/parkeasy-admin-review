@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api } from '../lib/api'
+import { api, MOCK } from '../lib/api'
 import { COMMISSION, heatmap, inRange, money, revenueSeries, statusCounts } from '../lib/stats'
 import { statusClass } from '../lib/resources'
 import type { Range, Row } from '../types'
@@ -21,10 +21,14 @@ export default function Dashboard() {
   const m = useMemo(() => {
     if (!d) return null
     const bookings = inRange(d.bookings, range)
-    const gross = bookings.filter((b) => b.status !== 'cancelled').reduce((a, b) => a + Number(b.amount), 0)
+    const paidBookings = bookings.filter((b) => MOCK ? b.status !== 'cancelled' : ['paid', 'succeeded'].includes(String(b.paymentStatus).toLowerCase()))
+    const gross = paidBookings.reduce((a, b) => a + Number(b.amount), 0)
+    const commission = MOCK ? gross * COMMISSION : paidBookings.reduce((a, b) => a + (b.commissionAmount == null ? 0 : Number(b.commissionAmount)), 0)
+    const hostHeld = MOCK ? gross * (1 - COMMISSION) : paidBookings.filter((b) => String(b.escrowStatus).toLowerCase() === 'held').reduce((a, b) => a + Number(b.hostAmount || 0), 0)
     const queue = d.payouts.filter((p) => p.status === 'queued').reduce((a, p) => a + Number(p.amount), 0)
-    const occ = Math.round(d.bays.reduce((a, b) => a + Number(b.occupancy), 0) / Math.max(1, d.bays.length))
-    return { bookings, gross, queue, occ, series: revenueSeries(bookings, range, d.payouts.filter((p) => p.status === 'paid').reduce((a, p) => a + Number(p.amount), 0)), status: statusCounts(bookings), heat: heatmap(bookings) }
+    const occupancy = d.bays.map((b) => b.occupancy).filter((v) => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number)
+    const occ = occupancy.length ? Math.round(occupancy.reduce((a, b) => a + b, 0) / occupancy.length) : null
+    return { bookings, gross, commission, hostHeld, queue, occ, series: revenueSeries(bookings, range, d.payouts.filter((p) => p.status === 'paid').reduce((a, p) => a + Number(p.amount), 0)), status: statusCounts(bookings), heat: heatmap(bookings) }
   }, [d, range])
 
   if (error) return <div className="err" role="alert">{error}</div>
@@ -33,12 +37,12 @@ export default function Dashboard() {
   const kpis: [string, string | number, string][] = [
     ['Users', d.users.length, `${d.users.filter((u) => u.status === 'active').length} active`],
     ['Active Bays', d.bays.filter((b) => b.status === 'active').length, `${d.bays.length} total listings`],
-    ['Gross Revenue', money(m.gross), `Commission ${money(m.gross * COMMISSION)}`],
+    ['Gross Revenue', money(m.gross), `Commission ${MOCK || d.bookings.some((b) => b.commissionAmount != null) ? money(m.commission) : '—'}`],
     ['Devices Online', d.devices.filter((x) => x.status === 'online').length, `${d.devices.length} installed`],
-    ['Bookings', m.bookings.length, ''], ['Host Held', money(m.gross * (1 - COMMISSION)), ''],
+    ['Bookings', m.bookings.length, ''], ['Host Held', MOCK || d.bookings.some((b) => b.hostAmount != null) ? money(m.hostHeld) : '—', 'Escrow held'],
     ['Payout Queue', money(m.queue), ''], ['KYC / Risk', d.kyc.filter((k) => k.risk === 'high').length, 'High-risk profiles'],
   ]
-  const ang = Math.PI * (m.occ / 100), gx = 100 - 80 * Math.cos(ang), gy = 100 - 80 * Math.sin(ang)
+  const ang = Math.PI * ((m.occ ?? 0) / 100), gx = 100 - 80 * Math.cos(ang), gy = 100 - 80 * Math.sin(ang)
   const tip = { background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 10, color: 'var(--tx)' }
 
   return (
@@ -66,7 +70,7 @@ export default function Dashboard() {
             <defs><linearGradient id="gg"><stop offset="0" stopColor="#00E5A8" /><stop offset="1" stopColor="#00E5A8" /></linearGradient></defs>
             <path d="M20 100A80 80 0 0 1 180 100" fill="none" stroke="var(--panel2)" strokeWidth="16" strokeLinecap="round" />
             <path d={`M20 100A80 80 0 0 1 ${gx} ${gy}`} fill="none" stroke="url(#gg)" strokeWidth="16" strokeLinecap="round" />
-            <text x="100" y="92" textAnchor="middle" fill="var(--tx)" fontSize="28" fontWeight="700">{m.occ}%</text>
+            <text x="100" y="92" textAnchor="middle" fill="var(--tx)" fontSize="28" fontWeight="700">{m.occ == null ? '—' : `${m.occ}%`}</text>
             <text x="100" y="110" textAnchor="middle" fill="var(--mut)" fontSize="10">Average utilisation</text>
           </svg></div>
       </div>
@@ -93,7 +97,7 @@ export default function Dashboard() {
             <Tooltip contentStyle={tip} formatter={(v: number) => money(v)} /><Line dataKey="commission" stroke="#00E5A8" strokeWidth={2} dot={false} /><Line dataKey="payouts" stroke="#9ca3af" strokeWidth={2} dot={false} />
           </LineChart></ResponsiveContainer></div>
         <div className="card"><h3>Top bays</h3>{[...d.bays].sort((a, b) => Number(b.occupancy) - Number(a.occupancy)).map((b) => (
-          <div key={b.id} style={{ marginBottom: 12 }}><div className="split">{b.name}<b>{b.occupancy}%</b></div><div className="bar"><i style={{ width: `${b.occupancy}%` }} /></div></div>))}</div>
+          <div key={b.id} style={{ marginBottom: 12 }}><div className="split">{b.name}<b>{b.occupancy == null ? '—' : `${b.occupancy}%`}</b></div><div className="bar"><i style={{ width: `${b.occupancy ?? 0}%` }} /></div></div>))}</div>
       </div>
 
       <div className="card" style={{ marginTop: 14 }}><h3>Recent bookings</h3><div className="tw"><table>
