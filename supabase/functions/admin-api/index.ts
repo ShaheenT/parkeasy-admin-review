@@ -21,6 +21,19 @@ async function profiles(ids:string[]) {
  return new Map((data||[]).map((p:any)=>[p.id,p]));
 }
 async function list(resource:string) {
+ if(resource==="notifications") {
+  const [payments,bookings,payouts]=await Promise.all([
+   db.from("payment_events").select("id,external_reference,processed,created_at,provider").order("created_at",{ascending:false}).limit(8),
+   db.from("parking_bookings").select("id,status,created_at").order("created_at",{ascending:false}).limit(8),
+   db.from("host_payouts").select("id,status,total_amount,created_at,reference").order("created_at",{ascending:false}).limit(8),
+  ]);
+  const rows:any[]=[];
+  for(const x of payments.data||[]) rows.push({id:"payment-"+x.id,message:"Payment event "+(x.external_reference||x.provider||x.id)+" · "+(x.processed?"processed":"pending"),when:x.created_at,createdAt:x.created_at});
+  for(const x of bookings.data||[]) rows.push({id:"booking-"+x.id,message:"Booking "+String(x.id).slice(0,8)+" · "+x.status,when:x.created_at,createdAt:x.created_at});
+  for(const x of payouts.data||[]) rows.push({id:"payout-"+x.id,message:"Host payout "+(x.reference||String(x.id).slice(0,8))+" · "+x.status,when:x.created_at,createdAt:x.created_at});
+  rows.sort((a,b)=>new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime());
+  return json(rows.slice(0,20).map((x:any)=>({id:x.id,message:x.message,when:new Date(x.createdAt).toLocaleString("en-ZA",{timeZone:"Africa/Johannesburg"})})));
+ }
  if(["users","scouts","kyc"].includes(resource)) {
   let q=db.from("profiles").select("*").order("created_at",{ascending:false}).limit(500);
   if(resource==="scouts") q=q.eq("role","scout");
