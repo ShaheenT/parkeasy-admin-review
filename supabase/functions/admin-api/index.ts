@@ -130,6 +130,7 @@ Deno.serve(async (req:Request)=>{
   if(req.method==="GET"&&m&&!m[2]) return await list(m[1]);
   if(req.method==="PATCH"&&m?.[2]) {
    const body=await req.json().catch(()=>({})); const action=body?.action;
+   if(auth.role!=="admin"&&!(m[1]==="support"&&action==="resolve")) return json({error:"Admin role required for this action"},403);
    if(m[1]==="bays"&&["pause","activate"].includes(action)) {
     const {data,error}=await db.from("parking_listings").update({is_active:action==="activate"}).eq("id",m[2]).select("id,title,hourly_rate,is_active").maybeSingle();
     if(error||!data) return json({error:"Listing update failed"},400);
