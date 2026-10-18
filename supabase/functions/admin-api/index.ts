@@ -6,13 +6,14 @@ const url = Deno.env.get("SUPABASE_URL")!;
 const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
 const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const db = createClient(url, service, {auth:{persistSession:false}});
+const roleForUi = (role:string) => String(role).toLowerCase() === "super_admin" ? "admin" : String(role).toLowerCase();
 async function authorize(token:string) {
  const client=createClient(url,anon,{auth:{persistSession:false,autoRefreshToken:false}});
  const {data,error}=await client.auth.getUser(token);
  if(error||!data.user) return null;
  const {data:admin}=await db.from("admin_users").select("user_id,role").eq("user_id",data.user.id).maybeSingle();
- if(!admin||!["admin","support"].includes(String(admin.role).toLowerCase())) return null;
- return {user:data.user,role:admin.role};
+ if(!admin||!["admin","support","super_admin"].includes(String(admin.role).toLowerCase())) return null;
+ return {user:data.user,role:roleForUi(admin.role)};
 }
 async function profiles(ids:string[]) {
  const unique=[...new Set(ids.filter(Boolean))];
@@ -110,8 +111,8 @@ Deno.serve(async (req:Request)=>{
    const {data,error}=await client.auth.signInWithPassword({email:body.email,password:body.password});
    if(error||!data.user||!data.session) return json({error:"Email or password is incorrect."},401);
    const {data:admin}=await db.from("admin_users").select("user_id,role").eq("user_id",data.user.id).maybeSingle();
-   if(!admin||!["admin","support"].includes(String(admin.role).toLowerCase())) return json({error:"This account is not authorised for the admin dashboard."},403);
-   return json({token:data.session.access_token,user:{id:data.user.id,name:data.user.user_metadata?.full_name||data.user.email,email:data.user.email,role:admin.role}});
+   if(!admin||!["admin","support","super_admin"].includes(String(admin.role).toLowerCase())) return json({error:"This account is not authorised for the admin dashboard."},403);
+   return json({token:data.session.access_token,user:{id:data.user.id,name:data.user.user_metadata?.full_name||data.user.email,email:data.user.email,role:roleForUi(admin.role)}});
   }
   const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if(!token) return json({error:"Sign in required"},401);
