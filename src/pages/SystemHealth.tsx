@@ -57,7 +57,7 @@ export default function SystemHealth() {
     } catch { /* Browser does not expose this entry type. */ }
 
     const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
-    const fcp = performance.getEntriesByName('first-contentful-paint').at(-1)
+    const fcp = performance.getEntriesByName('first-contentful-paint').slice(-1)[0]
     if (nav) setVitals((v) => ({ ...v, ttfb: nav.responseStart - nav.requestStart }))
     if (fcp) setVitals((v) => ({ ...v, fcp: fcp.startTime }))
     setResources(performance.getEntriesByType('resource') as PerformanceResourceTiming[])
