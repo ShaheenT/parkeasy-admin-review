@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
-import { Bell, Building2, CalendarDays, CreditCard, FileCheck2, LayoutDashboard, LogOut, MapPin, Menu, MessageSquare, Monitor, Moon, Plug, Settings, ShieldCheck, UserCog, Users, Wallet, X } from 'lucide-react'
+import { Bell, Building2, CalendarDays, CreditCard, FileCheck2, LayoutDashboard, LogOut, MapPin, Menu, MessageSquare, Monitor, Moon, Plug, Settings, ShieldCheck, UserCog, Activity, Users, Wallet, X } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { MOCK } from '../lib/api'
 
@@ -22,7 +22,7 @@ export default function Layout() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const loc = useLocation()
-  const title = NAV.flatMap((g) => g[1]).find((n) => n[0] === loc.pathname)?.[1] ?? 'Dashboard'
+  const title = loc.pathname === '/system-health' ? 'System Health' : NAV.flatMap((g) => g[1]).find((n) => n[0] === loc.pathname)?.[1] ?? 'Dashboard'
 
   const toggleTheme = () => {
     const r = document.documentElement
@@ -46,6 +46,7 @@ export default function Layout() {
               ))}
             </div>
           ))}
+          {user?.role === 'admin' && <div><div className="grp">Administration</div><NavLink to="/system-health" onClick={() => setOpen(false)} className={({ isActive }) => (isActive ? 'on' : '')}><Activity size={17} />System Health</NavLink></div>}
         </nav>
         <button className="logout" data-testid="logout" onClick={logout}><LogOut size={17} />Log out</button>
       </aside>
