@@ -9,6 +9,7 @@ import Integrations from './pages/Integrations'
 import Settings from './pages/Settings'
 import Notifications from './pages/Notifications'
 import Kyc from './pages/Kyc'
+import SystemHealth from './pages/SystemHealth'
 import { RESOURCES, type ResourceKey } from './lib/resources'
 
 const TABLES: ResourceKey[] = ['users', 'scouts', 'leads', 'bays', 'bookings', 'payments', 'payouts', 'devices', 'support']
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="notifications" element={<Notifications />} />
         <Route path="integrations" element={<Integrations />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="system-health" element={user.role === 'admin' ? <SystemHealth /> : <Navigate to="/" replace />} />
         <Route path="login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
